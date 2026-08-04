@@ -1202,6 +1202,110 @@ function nodeTooltip(n, st) {
   return bits.filter(Boolean).join(' · ');
 }
 
+/* ---------------------------------------------------------- DOM rendering */
+
+/* Everything a user's browser actually executes is built as real nodes —
+ * createElementNS + setAttribute + textContent — never innerHTML. The escaped
+ * string builder above (renderSvg) stays only for check.js, which runs in
+ * plain Node with no `document` to build into; it was never a security
+ * boundary here (every value was already escaped), but Obsidian's plugin
+ * guidelines treat innerHTML as a blanket risk regardless of what feeds it,
+ * so the code path real users hit doesn't use it at all.
+ */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  if (attrs) {
+    for (const key in attrs) {
+      const v = attrs[key];
+      if (v !== undefined && v !== null) el.setAttribute(key, v);
+    }
+  }
+  return el;
+}
+
+function buildSvgElement(view, state) {
+  const byId = new Map(view.nodes.map((n) => [n.id, n]));
+
+  const svg = svgEl('svg', {
+    class: 'vag-svg',
+    viewBox: `0 0 ${view.width} ${view.height}`,
+    width: '100%',
+    height: '100%',
+    preserveAspectRatio: 'xMidYMid meet',
+  });
+
+  const defs = svgEl('defs');
+  const marker = svgEl('marker', {
+    id: 'vag-arrow', viewBox: '0 0 8 8', refX: '7', refY: '4',
+    markerWidth: '6', markerHeight: '6', orient: 'auto',
+  });
+  marker.appendChild(svgEl('path', { d: 'M0,0 L8,4 L0,8 z', class: 'vag-arrow-head' }));
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  const edgesG = svgEl('g', { class: 'vag-edges' });
+  for (const e of view.edges) {
+    const a = byId.get(e.from);
+    const b = byId.get(e.to);
+    if (!a || !b) continue;
+    const long = Math.abs((b.rank || 0) - (a.rank || 0)) > 1 ? ' vag-edge-long' : '';
+    edgesG.appendChild(svgEl('path', {
+      class: `vag-edge vag-edge-${e.type}${long}`,
+      d: edgePath(a, b, view.width),
+      'data-from': e.from,
+      'data-to': e.to,
+      'marker-end': 'url(#vag-arrow)',
+    }));
+  }
+  svg.appendChild(edgesG);
+
+  const nodesG = svgEl('g', { class: 'vag-nodes' });
+  for (const n of view.nodes) {
+    const st = (state && state[n.id]) || null;
+    const cls = `vag-node vag-${KIND[n.kind].cls}${n.verified ? '' : ' vag-declared'}`
+      + `${st ? ` vag-state-${st.kind}` : ''}`;
+    const g = svgEl('g', {
+      class: cls, 'data-node': n.id, 'data-cadence': n.cadence || '', tabindex: '0',
+    });
+
+    g.appendChild(svgEl('rect', { x: n.x, y: n.y, width: n.w, height: n.h, rx: 7 }));
+
+    const text = svgEl('text', { x: n.x + n.w / 2, y: n.y + n.h / 2 + 4, 'text-anchor': 'middle' });
+    text.textContent = n.text || nodeText(n);
+    g.appendChild(text);
+
+    appendBadge(g, n, st);
+
+    const title = svgEl('title');
+    title.textContent = nodeTooltip(n, st);
+    g.appendChild(title);
+
+    nodesG.appendChild(g);
+  }
+  svg.appendChild(nodesG);
+
+  return svg;
+}
+
+/* Mirrors badgeSvg's three cases exactly, as real elements. */
+function appendBadge(g, n, st) {
+  if (!st) return;
+  const cx = n.x + n.w - 3;
+  const cy = n.y + 3;
+  if (st.badge && st.badge !== '0') {
+    g.appendChild(svgEl('circle', { class: 'vag-badge-bg', cx, cy, r: 8 }));
+    const t = svgEl('text', { class: 'vag-badge-text', x: cx, y: cy + 3, 'text-anchor': 'middle' });
+    t.textContent = st.badge;
+    g.appendChild(t);
+    return;
+  }
+  if (['failure', 'running', 'stale'].includes(st.kind)) {
+    g.appendChild(svgEl('circle', { class: 'vag-badge-dot', cx, cy, r: 4.5 }));
+  }
+}
+
 /* ---------------------------------------------------------------- the view */
 
 class AutomationGraphView extends ItemView {
@@ -1338,7 +1442,9 @@ class AutomationGraphView extends ItemView {
     root.toggleClass('vag-anim-off', anim === 'off');
     root.toggleClass('vag-anim-all', anim === 'all');
 
-    scroller.innerHTML = renderSvg(view, this.state);
+    // Real nodes, not innerHTML — scroller is freshly emptied by root.empty()
+    // above, so there is nothing stale to clear first.
+    scroller.appendChild(buildSvgElement(view, this.state));
     this.markFlow();
     this.flashChanges(previous);
 
@@ -2265,7 +2371,7 @@ module.exports = AutomationGraphPlugin;
  * Obsidian around it. Obsidian ignores extra properties on the exported class. */
 module.exports.__internals = {
   readSources, parseTriggers, parseEmissions, parseWorkflows, parseDeclared,
-  nextFire, cronLabel, buildGraph, layout, renderSvg, approxWidth, KIND,
+  nextFire, cronLabel, buildGraph, layout, renderSvg, buildSvgElement, approxWidth, KIND,
   readRepoSlug, resolveToken, fetchLive, localFreshness, stateFor, expectedPeriod, nodePeriod,
   pollDelay, ACTIVE_POLL_MS, watchTargets, configure,
   describeAge,
