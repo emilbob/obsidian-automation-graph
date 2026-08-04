@@ -1,0 +1,5 @@
+# Plugin settings, which may hold a GitHub token. Never commit this.
+data.json
+
+node_modules/
+.DS_Store
