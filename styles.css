@@ -199,13 +199,21 @@
   animation-duration: 1.1s;
 }
 
-/* Off means off, including the ambient and per-state animations. */
-.vag-anim-off .vag-edge,
-.vag-anim-off rect { animation: none !important; }
+/* Off means off, including the ambient and per-state animations. Specificity
+ * does the overriding, not !important: .vag-root.vag-anim-off is two classes
+ * on the same element (both toggled on the panel's root by draw()), which
+ * outranks every per-edge/per-state rule above without depending on staying
+ * last in the file. */
+.vag-root.vag-anim-off .vag-edge,
+.vag-root.vag-anim-off rect { animation: none; }
 
-/* The system-level preference outranks the plugin's setting, always. */
+/* The system-level preference outranks the plugin's setting, always — even
+ * "everything flowing", the highest-specificity animation rule above
+ * (.vag-anim-all .vag-edge-live/-trace, two classes). One class heavier here
+ * beats it unconditionally rather than relying on cascade order, which a
+ * later edit to this file could silently break. */
 @media (prefers-reduced-motion: reduce) {
-  .vag-edge, .vag-node rect { animation: none !important; }
+  .vag-root .vag-svg .vag-edge, .vag-root .vag-node rect { animation: none; }
 }
 
 .vag-node { cursor: pointer; outline: none; }

@@ -1,7 +1,7 @@
 {
     "id": "automation-graph",
     "name": "Automation Graph",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "minAppVersion": "1.4.0",
     "description": "Draws your repository's automation as a live graph, derived from the workflow files themselves rather than from a diagram you have to maintain.",
     "author": "emilbob",
