@@ -347,6 +347,17 @@
  * error red — it explains, then offers the one setting that resolves it. */
 .vag-empty { color: var(--text-muted); }
 
+/* What the plugin is, read before the reason it has nothing to show. */
+.vag-empty-lead {
+  color: var(--text-normal);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+/* The instruction carries more weight than the surrounding explanation — it is
+ * the sentence that has to be obeyed for anything to happen. */
+.vag-empty-ask { color: var(--text-normal); font-weight: 600; }
+
 .vag-empty-reason {
   color: var(--text-normal);
   font-family: var(--font-monospace);

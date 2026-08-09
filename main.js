@@ -1632,6 +1632,15 @@ class AutomationGraphView extends ItemView {
     const s = this.plugin.repoStatus();
     const box = root.createDiv({ cls: 'vag-error vag-empty' });
 
+    // What this is, before why it is empty. For most readers this panel is the
+    // first thing the plugin ever shows them, and opening with a diagnosis
+    // answers a question they have not formed yet — they do not know what it
+    // was trying to draw, so "this vault is not a repository" means nothing.
+    box.createDiv({
+      cls: 'vag-empty-lead',
+      text: 'Automation Graph draws a repository\'s workflows as a graph.',
+    });
+
     let reason;
     if (!s.exists) {
       reason = s.sameAsVault
@@ -1657,11 +1666,14 @@ class AutomationGraphView extends ItemView {
       .slice(0, 6);
 
     if (candidates.length) {
+      // An instruction, not an observation. "Found 6 repositories" states a
+      // fact and asks for nothing; the rows are buttons but read as a list, so
+      // the one action that fixes everything was never actually requested.
       box.createDiv({
-        cls: 'vag-empty-hint',
+        cls: 'vag-empty-hint vag-empty-ask',
         text: candidates.length === 1
-          ? 'Found a repository with automation in it:'
-          : `Found ${candidates.length} repositories with automation in them:`,
+          ? 'Pick this repository to draw it:'
+          : 'Pick the repository you want to draw:',
       });
       const list = box.createDiv({ cls: 'vag-candidates' });
       for (const c of candidates) {
@@ -1673,23 +1685,28 @@ class AutomationGraphView extends ItemView {
         });
         row.onclick = () => this.plugin.adoptRepo(c.root);
       }
-      box.createDiv({ cls: 'vag-empty-hint', text: 'Or set the path yourself:' });
+      box.createDiv({ cls: 'vag-empty-hint', text: 'Somewhere else? Set the path in settings.' });
     } else {
       box.createDiv({
         cls: 'vag-empty-hint',
         text: s.sameAsVault
-          ? 'The graph is drawn from a repository. If your code lives somewhere other '
-            + 'than this vault — which is the usual arrangement — point the plugin at it. '
-            + 'Nothing with workflows in it turned up in the usual places.'
-          : 'Set this to the folder that contains .github/workflows.',
+          ? 'Nothing with workflows in it turned up beside this vault or under your '
+            + 'home folder. If your code is somewhere less usual, set the path to the '
+            + 'folder that contains .github/workflows.'
+          : 'Set the path to the folder that contains .github/workflows.',
       });
     }
 
     new Setting(box)
       .addButton((btn) => {
-        btn.setButtonText(candidates.length ? 'Choose a folder…' : 'Set repository path…')
-          .setCta()
-          .onClick(() => this.plugin.openSettings());
+        // Says what it does. The old label — "Choose a folder…" — promised a
+        // picker this button does not open, on the one element that looks like
+        // the primary action.
+        btn.setButtonText('Open settings').onClick(() => this.plugin.openSettings());
+        // Accented only when it is the way forward. With repositories listed
+        // above, the rows are the action and an accented button beside them
+        // competes for the eye with the thing the reader should press.
+        if (!candidates.length) btn.setCta();
       });
   }
 
