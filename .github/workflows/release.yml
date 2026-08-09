@@ -1,0 +1,83 @@
+# Releasing this plugin by hand is three steps that must agree with each other:
+# the tag, the version in manifest.json, and the three files Obsidian actually
+# downloads. Get any of them wrong and nothing errors — the release simply is
+# not offered to anyone, silently, until someone notices weeks later. So the
+# agreement is checked here rather than remembered.
+#
+# Obsidian reads the tag as the version, with no `v` prefix, and fetches
+# main.js / manifest.json / styles.css from the release assets. Nothing else in
+# the repository is involved.
+
+name: Release
+
+on:
+  push:
+    tags:
+      # Exactly the shape Obsidian expects. A `v1.2.3` tag would build a
+      # release the updater never looks at.
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write        # create the release
+  id-token: write        # sign the provenance
+  attestations: write    # record it
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The three-way agreement, before anything is published.
+      - name: Tag, manifest and versions.json must agree
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          manifest=$(node -p "require('./manifest.json').version")
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::tag $tag but manifest.json says $manifest — Obsidian reads the tag as the version, so these must match"
+            exit 1
+          fi
+          if ! node -e "process.exit(require('./versions.json')['$tag'] ? 0 : 1)"; then
+            echo "::error::versions.json has no entry for $tag — Obsidian uses it to decide which app versions may install this"
+            exit 1
+          fi
+          echo "tag, manifest and versions.json all agree on $tag"
+
+      # The code checks that do not need a repository with automation in it.
+      # This repository has no graph of its own to derive.
+      - name: Checks
+        run: node check.js --unit
+
+      - name: Assets exist
+        run: |
+          for f in main.js manifest.json styles.css; do
+            test -f "$f" || { echo "::error::$f is missing"; exit 1; }
+          done
+
+      # What the review flagged: lets anyone verify these files were built from
+      # this repository at this commit, rather than uploaded from a laptop.
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # Reuse a release the tag already has — cutting one by hand and then
+          # pushing the tag should top it up, not fail.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" main.js manifest.json styles.css --clobber
+          else
+            gh release create "$tag" main.js manifest.json styles.css \
+              --title "$tag" --generate-notes
+          fi
