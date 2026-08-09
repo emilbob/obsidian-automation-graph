@@ -163,6 +163,10 @@ Neither can be removed without removing what the plugin is for. Nothing is writt
 - **Not a general diagramming tool.** It draws what it can derive; it won't draw what you tell it to.
 - **Heuristic edges.** Emissions are recognised from common commands (`gh issue create`, `git push`, committed paths). Something exotic will simply produce fewer edges — it won't produce wrong ones.
 
+## Contributing
+
+Issues and pull requests welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). There is no build step: `main.js` is the source, and `node check.js --unit` is the test suite.
+
 ## Licence
 
 MIT.
