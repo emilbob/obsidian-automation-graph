@@ -370,8 +370,20 @@
  * another row in the list above it. */
 .vag-empty-btn { display: inline-block; margin-top: 8px; cursor: pointer; }
 
-/* Paths are long; the default input shows about a third of one. */
-.vag-wide-input { width: 100%; }
+/* Paths are long; the default input shows about a third of one.
+ *
+ * Widening the input alone does nothing: `width: 100%` resolves against
+ * .setting-item-control, which is a flex item sized to its content, so 100% of
+ * narrow is still narrow. The control has to be told to take the free space
+ * first — then the input can fill it. */
+.setting-item:has(.vag-wide-input) .setting-item-control { flex: 1 1 auto; }
+
+.vag-wide-input {
+  width: 100%;
+  /* Floor for anything that does not honour the rule above: still readable,
+   * still short enough not to crush the label beside it in a narrow window. */
+  min-width: 16em;
+}
 
 /* A found repository is a thing to click, not a path to read and retype, so it
  * is a full-width target with the path large and the evidence underneath. */
