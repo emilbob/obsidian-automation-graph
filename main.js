@@ -38,8 +38,10 @@ const VIEW_TYPE = 'automation-graph';
  * timezone, because a timetable you have to convert in your head is one you
  * misread. Overridable for automation scheduled against somewhere else's day. */
 let TZ = 'UTC';
+let SYSTEM_TZ = 'UTC';
 try {
-  TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  SYSTEM_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  TZ = SYSTEM_TZ;
 } catch (e) { /* keep UTC */ }
 
 /* Path, relative to the vault root, of a note declaring automation that runs
@@ -50,7 +52,10 @@ try {
 let DOC_PATH = '';
 
 function configure(opts) {
-  if (opts.timezone) TZ = opts.timezone;
+  // Falls back rather than only overriding: clearing the setting has to put the
+  // system zone back, or an override can be typed and never taken off without
+  // restarting Obsidian.
+  TZ = (opts.timezone && String(opts.timezone).trim()) || SYSTEM_TZ;
   DOC_PATH = opts.declaredNote || '';
 }
 
@@ -2808,6 +2813,48 @@ class AutomationGraphSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.openIn = value;
             await this.plugin.saveSettings();
+          });
+      });
+
+    // The declared half of the graph has been described in the README since
+    // 1.0.0 and has never had a way to switch it on: the setting was read from
+    // data.json and no row ever wrote it. Anyone wanting dashed nodes opened
+    // this tab, found nothing, and concluded the feature did not work.
+    new Setting(containerEl)
+      .setName('Declared automation note')
+      .setDesc('Path, inside this vault, to a note describing automation that runs '
+        + 'outside the repository — a cloud runner, a scheduler elsewhere, a cron on your '
+        + 'laptop. Those become dashed nodes, marked as declared rather than verified. '
+        + 'Leave it empty and the feature is off.')
+      .addText((text) => {
+        text.inputEl.addClass('vag-wide-input');
+        text.setPlaceholder('reference/System — How It Works.md')
+          .setValue(this.plugin.settings.declaredNote || '')
+          .onChange(async (value) => {
+            this.plugin.settings.declaredNote = value.trim();
+            await this.plugin.saveSettings();
+            // The watched paths include the declared note, so they have to be
+            // re-pointed or edits to the new note go unnoticed until a reload.
+            this.plugin.stopWatching();
+            this.plugin.startWatching();
+            this.plugin.redrawAll();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName('Timezone')
+      .setDesc('Cron expressions in workflows are UTC; they are shown in your own zone, '
+        + 'because a timetable you have to convert in your head is one you misread. Set an '
+        + 'IANA zone here to read them against somewhere else\'s day instead. Empty uses '
+        + 'this machine\'s zone.')
+      .addText((text) => {
+        text.inputEl.addClass('vag-wide-input');
+        text.setPlaceholder(SYSTEM_TZ)
+          .setValue(this.plugin.settings.timezone || '')
+          .onChange(async (value) => {
+            this.plugin.settings.timezone = value.trim();
+            await this.plugin.saveSettings();
+            this.plugin.redrawAll();
           });
       });
 

@@ -115,6 +115,7 @@ Desktop only. `.github/` and `.claude/` are dot-folders, which Obsidian's index 
 |---|---|---|
 | Repository path | *(empty — detected, else the vault)* | folder holding `.github/workflows`; absolute, `../relative`, or `~/…` |
 | Find repositories | — | lists repositories with workflows to pick from |
+| Test connection | — | finds a token, says where it came from, makes one real request |
 | Open in | Main pane | main pane or left sidebar |
 | Animation | Only what is happening | or everything flowing, or off |
 | Declared automation note | *(empty)* | path to the note declaring off-repo automation |
