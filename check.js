@@ -16,6 +16,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const Module = require('module');
 
 // The plugin requires 'obsidian' at load time; nothing in the derivation path
@@ -39,7 +40,7 @@ Module._load = function stub(request, ...rest) {
 
 const plugin = require('./main.js');
 const {
-  readSources, buildGraph, layout, renderSvg, approxWidth, nextFire,
+  readSources, buildGraph, layout, renderSvg, approxWidth, nextFire, resolveRepoRoot,
 } = plugin.__internals;
 
 const args = process.argv.slice(2);
@@ -47,18 +48,48 @@ const htmlFlag = args.indexOf('--html');
 const htmlOut = htmlFlag >= 0 ? args[htmlFlag + 1] : null;
 const declFlag = args.indexOf('--declared');
 const declared = declFlag >= 0 ? args[declFlag + 1] : '';
-const positional = args.filter((a) => !a.startsWith('--') && a !== htmlOut && a !== declared);
+// The vault and the repository are separable now, so the harness has to be able
+// to separate them too — otherwise the arrangement most users have is the one
+// arrangement never tested.
+const vaultFlag = args.indexOf('--vault');
+const vaultArg = vaultFlag >= 0 ? args[vaultFlag + 1] : null;
+const positional = args.filter((a) => !a.startsWith('--')
+  && a !== htmlOut && a !== declared && a !== vaultArg);
+// Positional stays the repository, so `node check.js .` means what it always
+// meant. --vault splits the two apart when you want to test that arrangement.
 const root = path.resolve(positional[0] || '.');
+const vaultRoot = vaultArg ? path.resolve(vaultArg) : root;
 plugin.__internals.configure({ declaredNote: declared });
 
-const src = readSources(fs, path, root);
+/* resolveRepoRoot decides where every read below happens, and it is pure — so
+ * it is checked here rather than only being exercised by hand in the app. */
+const cases = [
+  ['', '/v', '/v', 'empty falls back to the vault'],
+  ['/abs/repo', '/v', path.normalize('/abs/repo'), 'absolute is taken as given'],
+  ['../work/api', '/v/vault', path.resolve('/v/vault', '../work/api'), 'relative resolves against the vault'],
+  ['~', '/v', os.homedir(), 'bare ~ is home'],
+  ['~/code/x', '/v', path.join(os.homedir(), 'code/x'), '~/ expands'],
+  ['  /abs/repo/  ', '/v', path.normalize('/abs/repo'), 'whitespace and trailing slash are ignored'],
+];
+let unitFailures = 0;
+for (const [input, vault, want, label] of cases) {
+  const got = resolveRepoRoot(path, vault, input, os.homedir());
+  if (got !== want) {
+    console.error(`FAIL resolveRepoRoot: ${label} — ${JSON.stringify(input)} gave ${got}, wanted ${want}`);
+    unitFailures += 1;
+  }
+}
+console.log(`resolveRepoRoot: ${cases.length - unitFailures}/${cases.length} cases pass`);
+
+const src = readSources(fs, path, root, vaultRoot);
 const graph = buildGraph(src);
 const view = layout(graph, { measure: approxWidth, maxWidth: 330 });   // a real sidebar's width
 
 const byKind = {};
 for (const n of graph.nodes) (byKind[n.kind] = byKind[n.kind] || []).push(n);
 
-console.log(`root: ${root}`);
+console.log(`repo:  ${root}`);
+console.log(`vault: ${vaultRoot}${vaultRoot === root ? ' (same — vault is the repository)' : ''}`);
 console.log(`sources: ${src.workflows.length} workflow(s), ${src.agents.length} agent(s), `
   + `declared note ${declared ? (src.doc ? 'found' : 'MISSING') : 'not configured'}`);
 console.log(`graph: ${graph.nodes.length} nodes, ${graph.edges.length} edges, `
@@ -94,8 +125,21 @@ ${css}</style><div class="pane vag-root"><div class="vag-scroll">${renderSvg(vie
   console.log(`\nwrote ${htmlOut}`);
 }
 
+if (unitFailures) {
+  console.error(`\nFAIL: ${unitFailures} resolveRepoRoot case(s) wrong — the repository path setting is broken.`);
+  process.exit(1);
+}
+
 const runners = graph.nodes.filter((n) => n.kind === 'workflow' || n.kind === 'routine');
 if (!runners.length || !graph.edges.length) {
-  console.error('\nFAIL: derived no runners or no edges — the parser is broken, not the vault.');
+  // Two causes now that the repository is separable from the vault, and they
+  // want opposite responses: fix the path, or fix the parser.
+  if (!src.workflows.length) {
+    console.error(`\nFAIL: no workflow files under ${root}/.github/workflows`
+      + ' — check the path argument before suspecting the parser.');
+  } else {
+    console.error('\nFAIL: derived no runners or no edges from '
+      + `${src.workflows.length} workflow file(s) — the parser is broken, not the repo.`);
+  }
   process.exit(1);
 }

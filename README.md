@@ -8,11 +8,13 @@ Most architecture diagrams are drawn once and slowly become fiction. This one is
 
 ## What it reads
 
-| Source | What it contributes |
-|---|---|
-| `.github/workflows/*.yml` | every workflow: its crons, its `push` / `issues` / `pull_request` triggers, and what its scripts actually do — `gh issue create`, `gh pr create`, `git push origin main`, files committed, scripts invoked |
-| `.claude/` *(optional)* | hooks and agents, if you use Claude Code |
-| a note you nominate *(optional)* | automation that runs **outside** this repository |
+| Source | Where | What it contributes |
+|---|---|---|
+| `.github/workflows/*.yml` | repository | every workflow: its crons, its `push` / `issues` / `pull_request` triggers, and what its scripts actually do — `gh issue create`, `gh pr create`, `git push origin main`, files committed, scripts invoked |
+| `.claude/` *(optional)* | repository | hooks and agents, if you use Claude Code |
+| a note you nominate *(optional)* | vault | automation that runs **outside** this repository |
+
+**Your vault does not have to be the repository.** Point **Settings → Automation Graph → Repository path** at the folder containing `.github/workflows` — absolute, relative to the vault (`../work/api`), or starting with `~`. Leave it empty and the vault is used, which is the old behaviour and still right for a vault that is itself a repo. The declared-automation note is always read from the vault, wherever the repository lives.
 
 Edges aren't listed anywhere — they're inferred from facts that match. If `release-pr.yml` waits on `push: branches: ["release/**"]` and something else produces `release/*`, that's an arrow. An edge means two files agree.
 
@@ -91,7 +93,9 @@ There is deliberately **no force layout**. This is a directed graph and position
 
 ## Install
 
-Not yet in the community catalogue. Either:
+**From Obsidian** — Settings → Community plugins → Browse → "Automation Graph".
+
+Or:
 
 **Manually** — download `main.js`, `manifest.json` and `styles.css` from the latest release into `<vault>/.obsidian/plugins/automation-graph/`, then enable it in Settings → Community plugins.
 
@@ -103,6 +107,7 @@ Desktop only. `.github/` and `.claude/` are dot-folders, which Obsidian's index 
 
 | Setting | Default | |
 |---|---|---|
+| Repository path | *(empty — the vault)* | folder holding `.github/workflows`; absolute, `../relative`, or `~/…` |
 | Open in | Main pane | main pane or left sidebar |
 | Animation | Only what is happening | or everything flowing, or off |
 | Declared automation note | *(empty)* | path to the note declaring off-repo automation |
@@ -116,10 +121,13 @@ Desktop only. `.github/` and `.claude/` are dot-folders, which Obsidian's index 
 ## Checking it yourself
 
 ```bash
-node check.js /path/to/your/vault
+node check.js /path/to/your/repo
+
+# repository and vault in different places — the usual arrangement
+node check.js /path/to/repo --vault /path/to/vault --declared notes/automation.md
 ```
 
-Runs the same parse → build → layout → SVG path outside Obsidian and prints what it derived: every node, its source file, every edge, and any drift. Exits non-zero if it derives no runners, so a parser regression is catchable from a terminal or from CI.
+Runs the same parse → build → layout → SVG path outside Obsidian and prints what it derived: every node, its source file, every edge, and any drift. It also unit-checks the repository-path resolution. Exits non-zero if it derives no runners, so a parser regression is catchable from a terminal or from CI.
 
 ## Limitations
 
