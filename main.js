@@ -56,16 +56,48 @@ function configure(opts) {
 
 /* ------------------------------------------------------------------ reading */
 
+/* Where the repository actually is.
+ *
+ * Empty means "the vault is the repository" — the only arrangement that was
+ * possible before this setting existed, and still the default, so an existing
+ * install sees no change. A relative path resolves against the vault, because
+ * `../work/api` is how people say where a sibling checkout is; `~` expands,
+ * because that is how they say the rest.
+ *
+ * Pure, and takes `home` rather than calling os.homedir(), so the harness can
+ * ask what a given string resolves to without a real filesystem underneath.
+ */
+function resolveRepoRoot(path, vaultRoot, repoPath, home) {
+  const raw = String(repoPath || '').trim().replace(/[/\\]+$/, '');
+  if (!raw) return vaultRoot;
+  let p = raw;
+  if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+    if (!home) return vaultRoot;          // no home to expand against; stay put
+    p = path.join(home, p.slice(1));
+  }
+  return path.isAbsolute(p) ? path.normalize(p) : path.resolve(vaultRoot, p);
+}
+
 /* Node's fs, not Obsidian's vault API: `.github/` and `.claude/` are dot-folders,
  * which Obsidian excludes from its index, so getAbstractFileByPath cannot see
- * them. Desktop-only for exactly this reason (manifest says so). */
-function readSources(fs, path, root) {
-  const readFile = (rel) => {
-    try { return fs.readFileSync(path.join(root, rel), 'utf8'); } catch (e) { return null; }
+ * them. Desktop-only for exactly this reason (manifest says so).
+ *
+ * Two roots, not one. Once the repository is allowed to sit outside the vault,
+ * the two halves stop living in the same place: workflows and `.claude/` are
+ * facts about the REPOSITORY, while the declared note is a note — it is in the
+ * VAULT, and reading it from the repo root would silently lose the declared
+ * half of the graph for exactly the users this setting exists for. `vaultRoot`
+ * defaults to `root` so the single-root callers keep working unchanged. */
+function readSources(fs, path, root, vaultRoot) {
+  const noteRoot = vaultRoot || root;
+  const readIn = (base, rel) => {
+    try { return fs.readFileSync(path.join(base, rel), 'utf8'); } catch (e) { return null; }
   };
-  const listDir = (rel) => {
-    try { return fs.readdirSync(path.join(root, rel)).sort(); } catch (e) { return []; }
+  const listIn = (base, rel) => {
+    try { return fs.readdirSync(path.join(base, rel)).sort(); } catch (e) { return []; }
   };
+  const readFile = (rel) => readIn(root, rel);
+  const listDir = (rel) => listIn(root, rel);
 
   const workflows = listDir('.github/workflows')
     .filter((f) => /\.ya?ml$/.test(f))
@@ -83,9 +115,9 @@ function readSources(fs, path, root) {
   // wolf gets ignored, then deleted.
   const noteDir = DOC_PATH.includes('/') ? DOC_PATH.slice(0, DOC_PATH.lastIndexOf('/')) : '';
   const docsText = DOC_PATH
-    ? listDir(noteDir || '.')
+    ? listIn(noteRoot, noteDir || '.')
       .filter((f) => f.endsWith('.md'))
-      .map((f) => readFile(noteDir ? `${noteDir}/${f}` : f) || '')
+      .map((f) => readIn(noteRoot, noteDir ? `${noteDir}/${f}` : f) || '')
       .join('\n')
     : '';
 
@@ -93,7 +125,7 @@ function readSources(fs, path, root) {
     workflows,
     agents,
     settings: readFile('.claude/settings.json'),
-    doc: DOC_PATH ? readFile(DOC_PATH) : null,
+    doc: DOC_PATH ? readIn(noteRoot, DOC_PATH) : null,
     docsText,
   };
 }
@@ -651,12 +683,16 @@ function stateFor(nodes, edges, live, freshness, now) {
  * a notes folder churns constantly, and almost none of that says anything
  * about the machine.
  */
+/* Each target says which root it hangs off, for the same reason readSources
+ * takes two: the workflow directories are in the repository and the declared
+ * note is in the vault, and once those differ a watcher pointed at the wrong
+ * one silently stops noticing edits. */
 function watchTargets(declaredNote) {
   const targets = [
-    ['.github/workflows', () => true],
-    ['.claude/agents', () => true],
-    ['.claude/hooks', () => true],
-    ['.claude', (f) => f === 'settings.json'],
+    ['.github/workflows', () => true, 'repo'],
+    ['.claude/agents', () => true, 'repo'],
+    ['.claude/hooks', () => true, 'repo'],
+    ['.claude', (f) => f === 'settings.json', 'repo'],
   ];
   if (declaredNote) {
     const slash = declaredNote.lastIndexOf('/');
@@ -664,7 +700,7 @@ function watchTargets(declaredNote) {
     const base = declaredNote.slice(slash + 1);
     // Only the declared note itself: its folder may hold notes that change
     // every day and say nothing about the machine.
-    targets.push([dir, (f) => f === base]);
+    targets.push([dir, (f) => f === base, 'vault']);
   }
   return targets;
 }
@@ -1419,11 +1455,7 @@ class AutomationGraphView extends ItemView {
     this.view = view;
 
     if (!view.nodes.length) {
-      root.createDiv({
-        cls: 'vag-error',
-        text: 'No automation found. This panel reads .github/workflows and, if present, '
-          + '.claude/ — open a vault that is itself a git repository with workflows in it.',
-      });
+      this.renderEmpty(root);
       return;
     }
 
@@ -1482,6 +1514,47 @@ class AutomationGraphView extends ItemView {
     } else {
       this.applyView();
     }
+  }
+
+  /* The first thing most readers see, because most vaults are not repositories.
+   * It used to say "open a vault that is itself a git repository", which asks
+   * someone to restructure their vault to use a plugin — so it says what it
+   * looked at, why that came back empty, and offers the setting that fixes it. */
+  renderEmpty(root) {
+    const s = this.plugin.repoStatus();
+    const box = root.createDiv({ cls: 'vag-error vag-empty' });
+
+    let reason;
+    if (!s.exists) {
+      reason = s.sameAsVault
+        ? 'This vault does not appear to be a repository.'
+        : `That folder does not exist: ${s.root}`;
+    } else if (!s.workflows && !s.claude) {
+      reason = s.isGit
+        ? `${s.root} is a repository, but it has no .github/workflows and no .claude/ — there is no automation here to draw.`
+        : `${s.root} has no .github/workflows and no .claude/ in it.`;
+    } else {
+      // Directories are there and were read; the graph still came out empty.
+      // That is a parse result, not a configuration mistake, and saying
+      // "point it somewhere else" here would send the reader the wrong way.
+      reason = `Read ${s.workflows} workflow file(s) in ${s.root}, but derived no nodes from them.`;
+    }
+    box.createDiv({ cls: 'vag-empty-reason', text: reason });
+
+    box.createDiv({
+      cls: 'vag-empty-hint',
+      text: s.sameAsVault
+        ? 'The graph is drawn from a repository. If your code lives somewhere other '
+          + 'than this vault — which is the usual arrangement — point the plugin at it.'
+        : 'Set this to the folder that contains .github/workflows.',
+    });
+
+    new Setting(box)
+      .addButton((btn) => {
+        btn.setButtonText('Set repository path…')
+          .setCta()
+          .onClick(() => this.plugin.openSettings());
+      });
   }
 
   renderHeader(head, legend, view) {
@@ -1959,6 +2032,9 @@ class AutomationGraphView extends ItemView {
 const DEFAULT_SETTINGS = {
   token: '', ghPath: '', autoRefreshMinutes: 0, openIn: 'main', layout: {},
   declaredNote: '', timezone: '',
+  // Empty = the vault is the repository, which is what every install before
+  // this setting assumed. Nothing changes for them on upgrade.
+  repoPath: '',
   // 'real' animates only what is actually happening — a workflow running now,
   // the chain you selected, a node whose state just changed. 'all' makes every
   // edge flow continuously, which looks better and means less: this machine is
@@ -2019,19 +2095,57 @@ class AutomationGraphPlugin extends Plugin {
     return adapter.basePath || (adapter.getBasePath && adapter.getBasePath()) || '';
   }
 
+  /* The repository the graph is derived from. Same as the vault unless the
+   * reader has said otherwise, which is the common case: most vaults are notes,
+   * and most repositories are somewhere else entirely. */
+  repoRoot() {
+    /* eslint-disable global-require */
+    const path = require('path');
+    let home = '';
+    try { home = require('os').homedir(); } catch (e) { /* no os module; ~ stays literal */ }
+    return resolveRepoRoot(path, this.vaultRoot(), this.settings && this.settings.repoPath, home);
+  }
+
+  /* What the configured repository path actually points at, in the terms the
+   * reader needs to fix it: does it exist, is it a repository, does it hold
+   * workflows. Shared by the settings tab and the empty panel, so the two can
+   * never disagree about why nothing was found. */
+  repoStatus() {
+    const root = this.repoRoot();
+    const out = {
+      root, exists: false, isGit: false, workflows: 0, claude: false, sameAsVault: root === this.vaultRoot(),
+    };
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      if (!fs.existsSync(root)) return out;
+      out.exists = true;
+      out.isGit = fs.existsSync(path.join(root, '.git'));
+      out.claude = fs.existsSync(path.join(root, '.claude'));
+      try {
+        out.workflows = fs.readdirSync(path.join(root, '.github/workflows'))
+          .filter((f) => /\.ya?ml$/.test(f)).length;
+      } catch (e) { /* no workflows directory — reported as 0, not as an error */ }
+    } catch (e) {
+      out.error = e.message;
+    }
+    return out;
+  }
+
   readVault() {
     /* eslint-disable global-require */
     const fs = require('fs');
     const path = require('path');
-    return readSources(fs, path, this.vaultRoot());
+    return readSources(fs, path, this.repoRoot(), this.vaultRoot());
   }
 
   /* Last-written times for produced files, from git. No network, so this is
-   * the half of "live" that keeps working on a plane. */
+   * the half of "live" that keeps working on a plane. Runs in the repository,
+   * which is the only place those paths mean anything. */
   readFreshness(paths) {
     try {
       const { execFileSync } = require('child_process');
-      return localFreshness(execFileSync, this.vaultRoot(), paths);
+      return localFreshness(execFileSync, this.repoRoot(), paths);
     } catch (e) {
       return {};
     }
@@ -2063,7 +2177,7 @@ class AutomationGraphPlugin extends Plugin {
     try {
       const fs = require('fs');
       const path = require('path');
-      slug = readRepoSlug(fs, path, this.vaultRoot());
+      slug = readRepoSlug(fs, path, this.repoRoot());
       found = this.findToken();
     } catch (e) {
       this.live = { error: `could not resolve a token: ${e.message}` };
@@ -2126,8 +2240,9 @@ class AutomationGraphPlugin extends Plugin {
     } catch (e) {
       return;                                     // no node API, no watching
     }
-    const root = this.vaultRoot();
-    for (const [rel, relevant] of watchTargets(this.settings.declaredNote)) {
+    const roots = { repo: this.repoRoot(), vault: this.vaultRoot() };
+    for (const [rel, relevant, which] of watchTargets(this.settings.declaredNote)) {
+      const root = roots[which] || roots.vault;
       try {
         const watcher = fs.watch(path.join(root, rel), { persistent: false }, (ev, file) => {
           if (!relevant(file)) return;
@@ -2155,6 +2270,28 @@ class AutomationGraphPlugin extends Plugin {
       this.watchDebounce = null;
       if (this.openViewCount()) this.redrawAll();
     }, 500);
+  }
+
+  /* Straight to this plugin's own tab, so the empty panel's button lands the
+   * reader on the setting rather than on the top of Obsidian's settings. */
+  openSettings() {
+    const setting = this.app.setting;
+    if (!setting || !setting.open) {
+      new Notice('Open Settings → Community plugins → Automation Graph.');
+      return;
+    }
+    setting.open();
+    if (setting.openTabById) setting.openTabById('automation-graph');
+  }
+
+  /* The repository moved: re-point the watchers, drop run state fetched about
+   * the old repo, and redraw. Without the re-watch, edits in the new repository
+   * would not reach the panel until a reload. */
+  async applyRepoPath() {
+    this.live = null;
+    this.stopWatching();
+    this.startWatching();
+    this.redrawAll();
   }
 
   /* Where the ribbon icon and the plain command put it. Both specific
@@ -2203,7 +2340,14 @@ class AutomationGraphPlugin extends Plugin {
     try {
       const { shell } = require('electron');
       const path = require('path');
-      const full = path.join(this.vaultRoot(), rel);
+      const fs = require('fs');
+      // Workflow files hang off the repository, the declared note off the
+      // vault. When those are the same directory this is the old behaviour;
+      // when they differ, guessing wrong opens nothing, so check.
+      const candidates = [...new Set([this.repoRoot(), this.vaultRoot()])]
+        .map((base) => path.join(base, rel));
+      const full = candidates.find((p) => { try { return fs.existsSync(p); } catch (e) { return false; } })
+        || candidates[0];
       const err = await shell.openPath(full);
       if (err) new Notice(`Could not open ${rel}: ${err}`);
     } catch (e) {
@@ -2220,9 +2364,55 @@ class AutomationGraphSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  /* One line saying what the configured path actually is, refreshed on every
+   * keystroke. A path setting that only reveals whether it worked when you
+   * close settings and reopen the panel is a setting people get wrong once and
+   * then abandon. */
+  renderRepoStatus(el) {
+    el.empty();
+    const s = this.plugin.repoStatus();
+    if (!s.exists) {
+      el.createDiv({ cls: 'vag-diag-line', text: `✗ no such folder: ${s.root}` });
+      return;
+    }
+    const bits = [];
+    bits.push(s.workflows
+      ? `${s.workflows} workflow file(s)`
+      : 'no .github/workflows');
+    if (s.claude) bits.push('.claude/ present');
+    if (!s.isGit) bits.push('not a git repository — run state and freshness will be unavailable');
+    const ok = s.workflows || s.claude;
+    el.createDiv({
+      cls: 'vag-diag-line',
+      text: `${ok ? '✓' : '✗'} ${s.root} — ${bits.join(', ')}`,
+    });
+  }
+
   display() {
     const { containerEl } = this;
     containerEl.empty();
+
+    // First, because nothing below it matters if the plugin is looking at the
+    // wrong directory.
+    new Setting(containerEl)
+      .setName('Repository path')
+      .setDesc('The repository whose automation is drawn. Leave empty if this vault is '
+        + 'itself the repository. Otherwise give the folder that contains .github/workflows '
+        + '— absolute, or relative to the vault (../work/api), or starting with ~. '
+        + 'The declared-automation note is always read from the vault, wherever this points.')
+      .addText((text) => {
+        text.inputEl.addClass('vag-wide-input');
+        text.setPlaceholder('~/code/my-repo  (empty = this vault)')
+          .setValue(this.plugin.settings.repoPath || '')
+          .onChange(async (value) => {
+            this.plugin.settings.repoPath = value.trim();
+            await this.plugin.saveSettings();
+            this.renderRepoStatus(repoReport);
+            await this.plugin.applyRepoPath();
+          });
+      });
+    const repoReport = containerEl.createDiv({ cls: 'setting-item-description vag-diag' });
+    this.renderRepoStatus(repoReport);
 
     const found = this.plugin.live && this.plugin.live.tokenFrom;
     containerEl.createEl('p', {
@@ -2324,9 +2514,10 @@ class AutomationGraphSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('GitHub token')
       .setDesc('Only needed if the environment and the gh CLI cannot supply one. '
-        + 'This vault is a private repo, so run state cannot be read without a token. '
+        + 'A private repository cannot report run state without a token. '
         + 'Needs read access to Actions, pull requests and issues. Stored in this '
-        + "plugin's data.json, which .gitignore excludes — do not commit it.")
+        + "plugin's data.json — if your vault is itself a repository, keep that file "
+        + 'out of version control.')
       .addText((text) => {
         text.inputEl.type = 'password';
         text.setPlaceholder('ghp_… (leave empty to use gh or the environment)')
@@ -2372,7 +2563,8 @@ module.exports = AutomationGraphPlugin;
 module.exports.__internals = {
   readSources, parseTriggers, parseEmissions, parseWorkflows, parseDeclared,
   nextFire, cronLabel, buildGraph, layout, renderSvg, buildSvgElement, approxWidth, KIND,
-  readRepoSlug, resolveToken, fetchLive, localFreshness, stateFor, expectedPeriod, nodePeriod,
+  readRepoSlug, resolveRepoRoot, resolveToken, fetchLive, localFreshness, stateFor,
+  expectedPeriod, nodePeriod,
   pollDelay, ACTIVE_POLL_MS, watchTargets, configure,
   describeAge,
   // The view too, so the panel's own wiring — header, legend, selection,

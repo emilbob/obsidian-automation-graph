@@ -343,6 +343,23 @@
   color: var(--text-error, #c76b6b);
 }
 
+/* The empty panel is not an error the reader caused, so it does not shout in
+ * error red — it explains, then offers the one setting that resolves it. */
+.vag-empty { color: var(--text-muted); }
+
+.vag-empty-reason {
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  overflow-wrap: anywhere;
+}
+
+.vag-empty-hint { margin-top: 8px; }
+
+.vag-empty .setting-item { border-top: none; padding-bottom: 0; }
+
+/* Paths are long; the default input shows about a third of one. */
+.vag-wide-input { width: 100%; }
+
 /* Token diagnosis in settings: a short report, monospaced so paths line up. */
 .vag-diag { margin: 4px 0 10px; }
 
