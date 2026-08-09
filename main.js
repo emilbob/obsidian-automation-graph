@@ -1581,6 +1581,12 @@ class AutomationGraphView extends ItemView {
     this.view = view;
 
     if (!graphHasContent(view.nodes)) {
+      // Drop the scaffolding built above before saying there is nothing to
+      // show. The header and legend would render as two empty bordered bars,
+      // and .vag-scroll is flex: 1 1 auto — it takes the whole pane and pushes
+      // the panel that explains what to do to the very bottom, under them.
+      root.empty();
+      this.detail = null;
       this.renderEmpty(root);
       return;
     }
@@ -2140,6 +2146,10 @@ class AutomationGraphView extends ItemView {
 
   showDetail(node) {
     const d = this.detail;
+    // Absent on the empty panel, which tears the pane down and rebuilds it
+    // without a detail pane. Nothing selectable exists there, but a redraw
+    // arriving from polling must not throw on the way past.
+    if (!d) return;
     d.empty();
     if (!node) {
       d.createDiv({
