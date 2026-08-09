@@ -1347,7 +1347,7 @@ function graphAriaLabel(view) {
   return `Automation graph: ${nodes.length} node${nodes.length === 1 ? '' : 's'}, `
     + `${edges.length} connection${edges.length === 1 ? '' : 's'}`
     + `${declared ? `, ${declared} declared but not verified` : ''}. `
-    + 'Use arrow keys to move, Enter to select.';
+    + 'Down and up follow the arrows, left and right move across a row, Enter selects.';
 }
 
 function nodeTooltip(n, st) {
@@ -1363,10 +1363,16 @@ function nodeTooltip(n, st) {
 
 /* Arrow-key movement across the graph.
  *
- * Left and right follow the edges, because the edges are what the picture is
- * about: "what does this set off" should be one key, not a hunt. Up and down
- * move between siblings at the same rank — the other things that fire on a
- * clock, the other artifacts a workflow writes.
+ * Down and up follow the edges, because this layout runs top to bottom: rank
+ * is the y axis, clocks at the top and `main` at the bottom, and every arrow
+ * on screen points downward. Binding edge-following to left/right instead —
+ * the first version of this — meant the key you pressed and the direction the
+ * graph moved had nothing to do with each other, which reads as the panel
+ * jumping at random rather than as navigation.
+ *
+ * Left and right move between siblings at the same rank, which is how a rank
+ * is actually drawn: spread horizontally, wrapping onto more lines when it is
+ * wider than the pane.
  *
  * Where a node has no edge in the direction asked for, movement falls back to
  * the nearest node in the next rank rather than stopping. A key that silently
@@ -1383,9 +1389,11 @@ function keyboardTarget(view, id, key) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const cur = byId.get(id);
   const rank = (n) => n.rank || 0;
-  // Reading order within a rank: left to right, then top to bottom, with the
-  // id as a last resort so the traversal is stable rather than layout-lucky.
-  const order = (a, b) => (a.x - b.x) || (a.y - b.y) || (a.id < b.id ? -1 : 1);
+  // Reading order: down the lines, then across each one. A rank wider than the
+  // pane wraps onto several lines, so y has to lead or the traversal jumps
+  // between lines mid-rank. The id is a last resort, so the order is stable
+  // rather than layout-lucky.
+  const order = (a, b) => (a.y - b.y) || (a.x - b.x) || (a.id < b.id ? -1 : 1);
 
   if (!cur) {
     return [...nodes].sort((a, b) => (rank(a) - rank(b)) || order(a, b))[0].id;
@@ -1394,27 +1402,44 @@ function keyboardTarget(view, id, key) {
   if (key === 'Home') return [...nodes].sort((a, b) => (rank(a) - rank(b)) || order(a, b))[0].id;
   if (key === 'End') return [...nodes].sort((a, b) => (rank(b) - rank(a)) || order(a, b))[0].id;
 
-  if (key === 'ArrowRight' || key === 'ArrowLeft') {
-    const forward = key === 'ArrowRight';
+  // Down and up: along a connection, toward the side of the picture the key
+  // points at.
+  //
+  // Direction is decided by geometry, not by which end of the edge this node
+  // is. Most edges run downward and the two agree, but a feedback edge — a
+  // hook writing back to `main`, which sits above it — runs the other way, and
+  // following it on ArrowDown moves the selection up the screen. Reading the
+  // edge's own direction is what produces that; reading the layout does not.
+  if (key === 'ArrowDown' || key === 'ArrowUp') {
+    const forward = key === 'ArrowDown';
     const linked = ((view.edges) || [])
-      .filter((e) => (forward ? e.from === id : e.to === id))
-      .map((e) => byId.get(forward ? e.to : e.from))
-      .filter(Boolean)
-      .sort(order);
+      .flatMap((e) => {
+        if (e.from === id) return [byId.get(e.to)];
+        if (e.to === id) return [byId.get(e.from)];
+        return [];
+      })
+      .filter((n) => n && (forward ? n.y > cur.y : n.y < cur.y))
+      .sort((a, b) => (forward ? a.y - b.y : b.y - a.y) || order(a, b));
     if (linked.length) return linked[0].id;
 
+    // No connection that way. Fall to the nearest node further down (or up),
+    // keeping as close to the current column as possible so the move still
+    // reads as a step rather than a jump across the picture. Measured in y
+    // rather than rank, because a rank wider than the pane wraps onto several
+    // lines and the nearest one of those is the honest next stop.
     const beyond = nodes
-      .filter((n) => (forward ? rank(n) > rank(cur) : rank(n) < rank(cur)))
-      .sort((a, b) => (Math.abs(rank(a) - rank(cur)) - Math.abs(rank(b) - rank(cur)))
+      .filter((n) => (forward ? n.y > cur.y : n.y < cur.y))
+      .sort((a, b) => (Math.abs(a.y - cur.y) - Math.abs(b.y - cur.y))
         || (Math.abs(a.x - cur.x) - Math.abs(b.x - cur.x))
         || order(a, b));
     return beyond.length ? beyond[0].id : null;
   }
 
-  if (key === 'ArrowDown' || key === 'ArrowUp') {
+  // Left and right: across the rank, the way it is drawn.
+  if (key === 'ArrowRight' || key === 'ArrowLeft') {
     const siblings = nodes.filter((n) => rank(n) === rank(cur)).sort(order);
     const at = siblings.findIndex((n) => n.id === id);
-    const next = siblings[at + (key === 'ArrowDown' ? 1 : -1)];
+    const next = siblings[at + (key === 'ArrowRight' ? 1 : -1)];
     return next ? next.id : null;
   }
 
@@ -1729,8 +1754,8 @@ class AutomationGraphView extends ItemView {
     d.createDiv({ cls: 'vag-d-title', text: 'Keyboard' });
     const keys = [
       ['Tab', 'move between nodes'],
-      ['← →', 'follow an edge back or forward'],
-      ['↑ ↓', 'move between nodes at the same level'],
+      ['↓ ↑', 'follow an edge downstream or back'],
+      ['← →', 'move across the row'],
       ['Home / End', 'first or last node'],
       ['Enter / Space', 'select — traces everything downstream'],
       ['Esc', 'clear the selection'],

@@ -190,19 +190,49 @@ console.log('\nkeyboard');
     unitFailures += 1;
   }
 
-  // Left and right must undo each other along a real edge, or the reader
-  // cannot back out of where a keypress took them.
+  // Down and up must undo each other along a real edge, or the reader cannot
+  // back out of where a keypress took them.
   let asym = 0;
   for (const n of view.nodes) {
-    const fwd = keyboardTarget(view, n.id, 'ArrowRight');
+    const fwd = keyboardTarget(view, n.id, 'ArrowDown');
     if (!fwd) continue;
     const isEdge = graph.edges.some((e) => e.from === n.id && e.to === fwd);
     if (!isEdge) continue;                       // fell through to a rank hop
-    const back = keyboardTarget(view, fwd, 'ArrowLeft');
+    const back = keyboardTarget(view, fwd, 'ArrowUp');
     if (back !== n.id && !graph.edges.some((e) => e.to === fwd && e.from === back)) asym += 1;
   }
   console.log(`  edge steps that reverse cleanly: ${asym === 0 ? 'all' : `${asym} do not`}`);
   if (asym) unitFailures += 1;
+
+  /* The key must move the selection the way the key points.
+   *
+   * The first version of this bound edge-following to left/right in a graph
+   * that is laid out top to bottom, so pressing → moved the selection
+   * downward and ↓ moved it sideways. Every check here passed: the graph was
+   * still fully reachable and every step still reversed. Reachability and
+   * reversal are properties of the graph, and say nothing about whether the
+   * keyboard agrees with what is on screen — so geometry is asserted now.
+   */
+  const byId = new Map(view.nodes.map((n) => [n.id, n]));
+  let wrongWay = 0;
+  for (const n of view.nodes) {
+    for (const [key, ok, label] of [
+      ['ArrowDown', (a, b) => b.y > a.y, 'down should move down'],
+      ['ArrowUp', (a, b) => b.y < a.y, 'up should move up'],
+      ['ArrowRight', (a, b) => b.x > a.x || b.y > a.y, 'right should move right or onto the next line'],
+      ['ArrowLeft', (a, b) => b.x < a.x || b.y < a.y, 'left should move left or onto the previous line'],
+    ]) {
+      const to = keyboardTarget(view, n.id, key);
+      if (!to) continue;
+      const t = byId.get(to);
+      if (!ok(n, t)) {
+        if (wrongWay < 5) console.error(`FAIL keyboard geometry: ${key} from ${n.label} — ${label}`);
+        wrongWay += 1;
+      }
+    }
+  }
+  console.log(`  key direction matches screen direction: ${wrongWay === 0 ? 'all moves' : `${wrongWay} do not`}`);
+  if (wrongWay) unitFailures += 1;
 
   // Every node must carry a name a screen reader can read out. Counted off the
   // rendered output rather than the model, since the markup is what assistive

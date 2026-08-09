@@ -96,15 +96,15 @@ Everything except dragging a node has a key, and **`?` in the header lists them 
 | Key | Does |
 |---|---|
 | `Tab` | move between nodes |
-| `←` `→` | follow an edge back or forward |
-| `↑` `↓` | move between nodes at the same level |
+| `↓` `↑` | follow an edge downstream or back |
+| `←` `→` | move across the row |
 | `Home` / `End` | first or last node |
 | `Enter` / `Space` | select — traces everything downstream |
 | `Esc` | clear the selection |
 | `+` / `−` | zoom |
 | `0` | fit everything in view |
 
-Arrow keys follow the graph's own edges, so `→` answers "what does this set off?" in one keypress. Where a node has no edge that way, the key moves to the nearest node in the next rank instead of doing nothing — which keeps every node reachable, including declared runners that connect to nothing in the repository. Focus brings the camera with it, so arrowing never moves the selection to somewhere off-screen.
+The keys match the picture: this graph runs top to bottom, so `↓` follows an edge downstream and answers "what does this set off?" in one keypress, while `←` and `→` move along a row. Where a node has no edge downstream, `↓` moves to the nearest node in the next rank instead of doing nothing — which keeps every node reachable, including declared runners that connect to nothing in the repository. Focus brings the camera with it, so arrowing never moves the selection to somewhere off-screen.
 
 Nodes are `role="button"` with an accessible name and a pressed state, the graph announces its size on entry, and the run-state line is a polite live region so a run starting is not visible-only news.
 
