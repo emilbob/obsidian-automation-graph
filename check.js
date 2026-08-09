@@ -133,6 +133,50 @@ console.log(`resolveRepoRoot: ${cases.length - unitFailures}/${cases.length} cas
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+/* The README's settings table against the settings that exist.
+ *
+ * "Declared automation note" and "Timezone" were documented from 1.0.0 and had
+ * no row in the settings tab in any version — the values were read from
+ * data.json and nothing ever wrote them. So the README told readers to switch
+ * on a feature they had no way to reach, and the whole declared-nodes half of
+ * the plugin was unusable by anyone who had not hand-edited a JSON file.
+ *
+ * Documentation drift is invisible to every other check in this file, so it is
+ * checked directly: what is promised must exist, and what exists must be
+ * written down.
+ */
+{
+  const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, 'main.js'), 'utf8');
+
+  // Bounded to the section: the README has other tables after this one, and an
+  // unbounded split reads their first columns as settings.
+  const after = readme.split('\n## Settings\n')[1] || '';
+  const table = after.split('\n## ')[0];
+  const documented = new Set(
+    table.split('\n')
+      .filter((l) => l.startsWith('|') && !/^\|\s*-+/.test(l) && !/^\|\s*Setting\s*\|/.test(l))
+      .map((l) => l.split('|')[1].trim().replace(/`/g, ''))
+      .filter(Boolean),
+  );
+  const implemented = new Set(
+    [...source.matchAll(/setName\('([^']+)'\)/g)].map((m) => m[1]),
+  );
+
+  const promised = [...documented].filter((n) => !implemented.has(n));
+  const undocumented = [...implemented].filter((n) => !documented.has(n));
+  console.log(`settings: ${implemented.size} implemented, ${documented.size} documented`);
+  for (const n of promised) {
+    console.error(`FAIL: README documents "${n}" but no such setting exists`);
+    unitFailures += 1;
+  }
+  for (const n of undocumented) {
+    console.error(`FAIL: setting "${n}" exists but the README does not document it`);
+    unitFailures += 1;
+  }
+  if (!promised.length && !undocumented.length) console.log('  README and the settings tab agree');
+}
+
 /* What a brand-new user sees, which nothing here previously looked at.
  *
  * Every check in this file ran against a repository that had automation in it.
