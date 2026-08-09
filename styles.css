@@ -360,6 +360,50 @@
 /* Paths are long; the default input shows about a third of one. */
 .vag-wide-input { width: 100%; }
 
+/* A found repository is a thing to click, not a path to read and retype, so it
+ * is a full-width target with the path large and the evidence underneath. */
+.vag-candidates { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 10px; }
+
+.vag-candidate {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  cursor: pointer;
+  background: var(--background-modifier-form-field);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+}
+
+.vag-candidate:hover { background: var(--background-modifier-hover); }
+
+.vag-candidate:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+.vag-candidate-path {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-normal);
+  overflow-wrap: anywhere;
+}
+
+.vag-candidate-meta { font-size: 10px; color: var(--text-faint); margin-top: 2px; }
+
+/* The panel admitting it chose the repository itself. Quiet — it is a note,
+ * not a warning — but present on every draw until a path is pinned. */
+.vag-detected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 100%;
+  margin: 2px 0;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
 /* Token diagnosis in settings: a short report, monospaced so paths line up. */
 .vag-diag { margin: 4px 0 10px; }
 
