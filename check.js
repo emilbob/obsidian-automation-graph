@@ -133,6 +133,32 @@ console.log(`resolveRepoRoot: ${cases.length - unitFailures}/${cases.length} cas
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+/* What a brand-new user sees, which nothing here previously looked at.
+ *
+ * Every check in this file ran against a repository that had automation in it.
+ * The one case that decides whether someone keeps the plugin — a vault with
+ * nothing in it at all — was never built, so nobody noticed that buildGraph
+ * lays down the human gate and `main` unconditionally and the panel's "is this
+ * empty" test could never be true. The onboarding screen was unreachable for
+ * three releases.
+ */
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vag-fresh-'));
+  const before = plugin.__internals;
+  before.configure({ declaredNote: '' });
+  const fresh = before.buildGraph(before.readSources(fs, path, tmp, tmp));
+  const has = before.graphHasContent(fresh.nodes);
+  console.log(`fresh vault: ${fresh.nodes.length} node(s) — ${fresh.nodes.map((n) => n.kind).join(', ') || 'none'}`);
+  console.log(`  shows the empty panel: ${has ? 'NO' : 'yes'}`);
+  if (has) {
+    console.error('FAIL: a vault with no automation does not reach the empty panel —'
+      + ' new users get a meaningless graph instead of being told what to do');
+    unitFailures += 1;
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+  before.configure({ declaredNote: declared });          // restore for the run below
+}
+
 /* --unit stops here: everything above tests the code against inputs it builds
  * itself, everything below needs a repository with automation in it. CI runs
  * against this repository, which has no graph of its own to derive — asking it
