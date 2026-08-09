@@ -41,6 +41,7 @@ Module._load = function stub(request, ...rest) {
 const plugin = require('./main.js');
 const {
   readSources, buildGraph, layout, renderSvg, approxWidth, nextFire, resolveRepoRoot,
+  findRepoCandidates,
 } = plugin.__internals;
 
 const args = process.argv.slice(2);
@@ -80,6 +81,57 @@ for (const [input, vault, want, label] of cases) {
   }
 }
 console.log(`resolveRepoRoot: ${cases.length - unitFailures}/${cases.length} cases pass`);
+
+/* Detection decides what a first run sees, and it walks a real filesystem — so
+ * it is checked against a real one, built here and thrown away, rather than
+ * against a mock that cannot reproduce the things that actually go wrong
+ * (unreadable directories, huge trees, repos nested inside repos). */
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vag-detect-'));
+  const mk = (rel, workflows) => {
+    const dir = path.join(tmp, rel);
+    fs.mkdirSync(path.join(dir, '.github/workflows'), { recursive: true });
+    for (let i = 0; i < workflows; i += 1) {
+      fs.writeFileSync(path.join(dir, `.github/workflows/w${i}.yml`), 'on: push\n');
+    }
+    fs.mkdirSync(path.join(dir, '.git'), { recursive: true });
+    return dir;
+  };
+
+  const big = mk('code/api', 4);
+  mk('code/site', 1);
+  // Noise that must not be picked up: no workflows, and a vendored copy that
+  // would otherwise show up as a third repository.
+  fs.mkdirSync(path.join(tmp, 'code/notes'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'code/api/node_modules/dep/.github/workflows'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'code/api/node_modules/dep/.github/workflows/x.yml'), 'on: push\n');
+
+  const found = findRepoCandidates(fs, path, path.join(tmp, 'vault'), tmp);
+  const roots = found.map((c) => c.root);
+  const detectChecks = [
+    [found.length === 2, `found exactly the two real repos (got ${found.length}: ${roots.join(', ')})`],
+    [roots[0] === big, 'the repo with the most workflows is offered first'],
+    [found[0] && found[0].workflows === 4, 'workflow counts are right'],
+    [!roots.some((r) => r.includes('node_modules')), 'vendored copies are skipped'],
+    [found.every((c) => c.isGit), 'git repositories are recognised as such'],
+  ];
+  for (const [ok, label] of detectChecks) {
+    if (!ok) { console.error(`FAIL findRepoCandidates: ${label}`); unitFailures += 1; }
+  }
+  console.log(`findRepoCandidates: ${detectChecks.filter(([ok]) => ok).length}/${detectChecks.length} cases pass`);
+
+  // The budget is the only thing standing between "opens instantly" and
+  // "walks your entire home directory", so it is asserted, not assumed.
+  const wide = path.join(tmp, 'wide');
+  for (let i = 0; i < 200; i += 1) fs.mkdirSync(path.join(wide, `d${i}`), { recursive: true });
+  const t0 = Date.now();
+  findRepoCandidates(fs, path, wide, tmp, { budget: 60 });
+  const ms = Date.now() - t0;
+  console.log(`  budget honoured on a 200-directory tree: ${ms}ms`);
+  if (ms > 1500) { console.error('FAIL findRepoCandidates: scan is too slow to run on open'); unitFailures += 1; }
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
 
 const src = readSources(fs, path, root, vaultRoot);
 const graph = buildGraph(src);

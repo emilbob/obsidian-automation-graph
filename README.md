@@ -14,7 +14,13 @@ Most architecture diagrams are drawn once and slowly become fiction. This one is
 | `.claude/` *(optional)* | repository | hooks and agents, if you use Claude Code |
 | a note you nominate *(optional)* | vault | automation that runs **outside** this repository |
 
-**Your vault does not have to be the repository.** Point **Settings → Automation Graph → Repository path** at the folder containing `.github/workflows` — absolute, relative to the vault (`../work/api`), or starting with `~`. Leave it empty and the vault is used, which is the old behaviour and still right for a vault that is itself a repo. The declared-automation note is always read from the vault, wherever the repository lives.
+**Your vault does not have to be the repository**, and you should not have to tell it where one is.
+
+On first open it looks for repositories with workflows in them — beside the vault, and in the usual places under your home folder — and offers what it finds as a list to click. Find exactly one and it just uses it, saying so in the header with a way to change it. The scan is breadth-first with a hard budget; it takes a few milliseconds and skips `node_modules` and the like.
+
+If your layout is unusual, **Settings → Automation Graph → Repository path** takes a path directly: absolute, relative to the vault (`../work/api`), or starting with `~`. A path you set always wins over anything detected.
+
+The declared-automation note is always read from the vault, wherever the repository lives.
 
 Edges aren't listed anywhere — they're inferred from facts that match. If `release-pr.yml` waits on `push: branches: ["release/**"]` and something else produces `release/*`, that's an arrow. An edge means two files agree.
 
@@ -107,7 +113,8 @@ Desktop only. `.github/` and `.claude/` are dot-folders, which Obsidian's index 
 
 | Setting | Default | |
 |---|---|---|
-| Repository path | *(empty — the vault)* | folder holding `.github/workflows`; absolute, `../relative`, or `~/…` |
+| Repository path | *(empty — detected, else the vault)* | folder holding `.github/workflows`; absolute, `../relative`, or `~/…` |
+| Find repositories | — | lists repositories with workflows to pick from |
 | Open in | Main pane | main pane or left sidebar |
 | Animation | Only what is happening | or everything flowing, or off |
 | Declared automation note | *(empty)* | path to the note declaring off-repo automation |

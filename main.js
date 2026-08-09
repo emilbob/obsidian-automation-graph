@@ -78,6 +78,114 @@ function resolveRepoRoot(path, vaultRoot, repoPath, home) {
   return path.isAbsolute(p) ? path.normalize(p) : path.resolve(vaultRoot, p);
 }
 
+/* Where people keep code. Not an attempt at every possible layout — just the
+ * handful of names that cover most machines, so the common case needs no
+ * typing at all. Anything unusual still has the text field. */
+const REPO_SEARCH_DIRS = [
+  'code', 'Code', 'dev', 'Dev', 'Developer', 'src', 'repos', 'Repos',
+  'projects', 'Projects', 'git', 'work', 'Work', 'Documents', 'Sites',
+];
+
+const SKIP_DIRS = new Set([
+  'node_modules', 'Library', 'Applications', 'Music', 'Movies', 'Pictures',
+  'Downloads', 'Public', 'Desktop', '.Trash', 'venv', 'vendor', 'target', 'dist', 'build',
+]);
+
+/* Find repositories that actually contain workflows, so the plugin can offer
+ * them instead of asking for an absolute path.
+ *
+ * A text box wanting a filesystem path is a quiz: someone who cannot remember
+ * whether their code is at ~/code/api or ~/Documents/code/api gives up there,
+ * and that is the last screen of a first run. Looking is cheap; the search is
+ * breadth-first from a few known places, bounded hard by a readdir budget so a
+ * huge home directory cannot make opening the panel slow.
+ *
+ * Takes fs so the harness can run it against a synthetic tree. Never throws:
+ * an unreadable directory is one fewer candidate, not an error the reader has
+ * to understand.
+ */
+function findRepoCandidates(fs, path, vaultRoot, home, opts) {
+  const budget = { left: (opts && opts.budget) || 300 };
+  const maxDepth = (opts && opts.maxDepth) || 2;
+  const found = new Map();
+
+  const list = (dir) => {
+    if (budget.left <= 0) return [];
+    budget.left -= 1;
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true });
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const workflowCount = (dir) => {
+    const entries = list(path.join(dir, '.github/workflows'));
+    return entries.filter((e) => !e.isDirectory() && /\.ya?ml$/.test(e.name)).length;
+  };
+
+  /* Directories are identified by inode, not by the string used to reach them.
+   * On a case-insensitive filesystem — the macOS default — ~/code and ~/Code
+   * are one directory, and seeding both spellings offers the reader every
+   * repository twice. Symlinked search roots collapse the same way, and a
+   * directory reached by two names is scanned once instead of twice. Falls
+   * back to the path where a filesystem reports no usable inode. */
+  const identity = (dir) => {
+    try {
+      const st = fs.statSync(dir);
+      if (st && st.ino) return `${st.dev}:${st.ino}`;
+    } catch (e) { /* gone or unreadable; the path is as good a key as any */ }
+    return dir;
+  };
+
+  const consider = (dir, key) => {
+    if (found.has(key)) return true;
+    const n = workflowCount(dir);
+    if (!n) return false;
+    let isGit = false;
+    try { isGit = fs.existsSync(path.join(dir, '.git')); } catch (e) { /* unreadable */ }
+    found.set(key, { root: dir, workflows: n, isGit });
+    return true;
+  };
+
+  const seeds = [];
+  if (vaultRoot) {
+    seeds.push(vaultRoot);
+    try { seeds.push(path.dirname(vaultRoot)); } catch (e) { /* no parent */ }
+  }
+  if (home) {
+    seeds.push(home);
+    for (const d of REPO_SEARCH_DIRS) seeds.push(path.join(home, d));
+  }
+
+  const queue = seeds.map((dir) => [dir, 0]);
+  const visited = new Set();
+  while (queue.length && budget.left > 0) {
+    const [dir, depth] = queue.shift();
+    if (!dir) continue;
+    const key = identity(dir);
+    if (visited.has(key)) continue;
+    visited.add(key);
+
+    // A directory that is itself a repository with workflows is an answer, and
+    // descending into it would only turn up its own vendored copies.
+    if (consider(dir, key)) continue;
+    if (depth >= maxDepth) continue;
+
+    for (const entry of list(dir)) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+      queue.push([path.join(dir, entry.name), depth + 1]);
+    }
+  }
+
+  // Most workflows first — that is the repository whose automation is worth
+  // drawing. Shallower paths break ties, being the likelier main checkout.
+  return [...found.values()].sort((a, b) => (b.workflows - a.workflows)
+    || (a.root.split(/[/\\]/).length - b.root.split(/[/\\]/).length)
+    || (a.root < b.root ? -1 : 1));
+}
+
 /* Node's fs, not Obsidian's vault API: `.github/` and `.claude/` are dot-folders,
  * which Obsidian excludes from its index, so getAbstractFileByPath cannot see
  * them. Desktop-only for exactly this reason (manifest says so).
@@ -1541,17 +1649,45 @@ class AutomationGraphView extends ItemView {
     }
     box.createDiv({ cls: 'vag-empty-reason', text: reason });
 
-    box.createDiv({
-      cls: 'vag-empty-hint',
-      text: s.sameAsVault
-        ? 'The graph is drawn from a repository. If your code lives somewhere other '
-          + 'than this vault — which is the usual arrangement — point the plugin at it.'
-        : 'Set this to the folder that contains .github/workflows.',
-    });
+    // Offer what is actually on this machine before asking anyone to type a
+    // path. Reaching this screen and being handed a blank text field is the
+    // point a first run usually ends.
+    const candidates = this.plugin.repoCandidates()
+      .filter((c) => c.root !== s.root)
+      .slice(0, 6);
+
+    if (candidates.length) {
+      box.createDiv({
+        cls: 'vag-empty-hint',
+        text: candidates.length === 1
+          ? 'Found a repository with automation in it:'
+          : `Found ${candidates.length} repositories with automation in them:`,
+      });
+      const list = box.createDiv({ cls: 'vag-candidates' });
+      for (const c of candidates) {
+        const row = list.createEl('button', { cls: 'vag-candidate' });
+        row.createDiv({ cls: 'vag-candidate-path', text: this.plugin.shortPath(c.root) });
+        row.createDiv({
+          cls: 'vag-candidate-meta',
+          text: `${c.workflows} workflow${c.workflows === 1 ? '' : 's'}${c.isGit ? '' : ' · not a git repository'}`,
+        });
+        row.onclick = () => this.plugin.adoptRepo(c.root);
+      }
+      box.createDiv({ cls: 'vag-empty-hint', text: 'Or set the path yourself:' });
+    } else {
+      box.createDiv({
+        cls: 'vag-empty-hint',
+        text: s.sameAsVault
+          ? 'The graph is drawn from a repository. If your code lives somewhere other '
+            + 'than this vault — which is the usual arrangement — point the plugin at it. '
+            + 'Nothing with workflows in it turned up in the usual places.'
+          : 'Set this to the folder that contains .github/workflows.',
+      });
+    }
 
     new Setting(box)
       .addButton((btn) => {
-        btn.setButtonText('Set repository path…')
+        btn.setButtonText(candidates.length ? 'Choose a folder…' : 'Set repository path…')
           .setCta()
           .onClick(() => this.plugin.openSettings());
       });
@@ -1565,9 +1701,15 @@ class AutomationGraphView extends ItemView {
 
     const title = head.createDiv({ cls: 'vag-title' });
     title.createSpan({ text: 'Automation' });
+    const sub = `${counts.verified} derived · ${counts.declared} declared`;
     title.createSpan({
       cls: 'vag-sub',
-      text: `${counts.verified} derived · ${counts.declared} declared`,
+      // Which repository, whenever it is not the vault. A graph is a claim
+      // about a specific repository, and the panel should never leave the
+      // reader guessing which one they are looking at.
+      text: this.plugin.repoRoot() === this.plugin.vaultRoot()
+        ? sub
+        : `${sub} · ${this.plugin.shortPath(this.plugin.repoRoot())}`,
     });
 
     const tools = head.createDiv({ cls: 'vag-tools' });
@@ -1587,6 +1729,16 @@ class AutomationGraphView extends ItemView {
     // The live row states its own freshness, always. There is no rendering of
     // this panel in which run state is silently missing: it either carries a
     // timestamp or it says why it has none.
+    // Picked for them, not by them: said once, plainly, with the way to change
+    // it. Silently drawing a repository nobody chose is the kind of helpfulness
+    // that reads as a bug the first time it guesses wrong.
+    if (this.plugin.usingDetectedRepo()) {
+      const note = head.createDiv({ cls: 'vag-detected' });
+      note.createSpan({ text: `Found this repository automatically — ${this.plugin.shortPath(this.plugin.repoRoot())}` });
+      const change = note.createEl('button', { text: 'change', cls: 'vag-btn vag-btn-sm' });
+      change.onclick = () => this.plugin.openSettings();
+    }
+
     const live = this.plugin.live;
     const row = head.createDiv({ cls: 'vag-live' });
     let text;
@@ -2101,9 +2253,79 @@ class AutomationGraphPlugin extends Plugin {
   repoRoot() {
     /* eslint-disable global-require */
     const path = require('path');
-    let home = '';
-    try { home = require('os').homedir(); } catch (e) { /* no os module; ~ stays literal */ }
-    return resolveRepoRoot(path, this.vaultRoot(), this.settings && this.settings.repoPath, home);
+    const explicit = this.settings && this.settings.repoPath;
+    if (explicit) {
+      let home = '';
+      try { home = require('os').homedir(); } catch (e) { /* ~ stays literal */ }
+      return resolveRepoRoot(path, this.vaultRoot(), explicit, home);
+    }
+    // Nothing configured: if exactly one repository was found on this machine,
+    // use it rather than drawing an empty panel and asking for a path. Nothing
+    // is written to settings — the reader can still set one, and this
+    // re-resolves on reload if their machine changes.
+    return this.autoRepo() || this.vaultRoot();
+  }
+
+  homeDir() {
+    try { return require('os').homedir(); } catch (e) { return ''; }
+  }
+
+  /* Absolute paths are long enough to wrap twice in a sidebar. `~` is both
+   * shorter and how the reader thinks of it anyway. */
+  shortPath(p) {
+    const home = this.homeDir();
+    return home && p.startsWith(home) ? `~${p.slice(home.length)}` : p;
+  }
+
+  /* Cached for the session: the panel redraws on file changes and on every
+   * poll, and walking the disk each time would make those redraws cost real
+   * time for an answer that almost never changes. */
+  repoCandidates() {
+    if (this.candidateCache) return this.candidateCache;
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      this.candidateCache = findRepoCandidates(fs, path, this.vaultRoot(), this.homeDir());
+    } catch (e) {
+      this.candidateCache = [];
+    }
+    return this.candidateCache;
+  }
+
+  /* Adopt a detected repository only when there is exactly one, and only when
+   * the vault is not itself a repository with workflows. Two candidates is a
+   * question, not a default — guessing between them would draw a graph of the
+   * wrong project and look like a bug rather than a choice. */
+  autoRepo() {
+    if (this.autoRepoCache !== undefined) return this.autoRepoCache;
+    const vault = this.vaultRoot();
+    const found = this.repoCandidates();
+    if (found.some((c) => c.root === vault)) {
+      this.autoRepoCache = null;                 // the vault is the repository
+    } else {
+      this.autoRepoCache = found.length === 1 ? found[0].root : null;
+    }
+    return this.autoRepoCache;
+  }
+
+  /* True when the graph is being drawn from somewhere nobody chose, which the
+   * panel has to say out loud — a picture of a repository you did not pick is
+   * confusing precisely because it looks right. */
+  usingDetectedRepo() {
+    return !(this.settings && this.settings.repoPath) && !!this.autoRepo();
+  }
+
+  forgetDetection() {
+    this.candidateCache = null;
+    this.autoRepoCache = undefined;
+  }
+
+  /* Take one of the offered repositories. Writes it to settings, so from here
+   * on it is a choice rather than a guess. */
+  async adoptRepo(root) {
+    this.settings.repoPath = root;
+    await this.saveSettings();
+    await this.applyRepoPath();
   }
 
   /* What the configured repository path actually points at, in the terms the
@@ -2289,6 +2511,7 @@ class AutomationGraphPlugin extends Plugin {
    * would not reach the panel until a reload. */
   async applyRepoPath() {
     this.live = null;
+    this.forgetDetection();
     this.stopWatching();
     this.startWatching();
     this.redrawAll();
@@ -2371,6 +2594,13 @@ class AutomationGraphSettingTab extends PluginSettingTab {
   renderRepoStatus(el) {
     el.empty();
     const s = this.plugin.repoStatus();
+    if (this.plugin.usingDetectedRepo()) {
+      el.createDiv({
+        cls: 'vag-diag-line',
+        text: `Using ${this.plugin.shortPath(s.root)}, found automatically. `
+          + 'Set a path here to pin it.',
+      });
+    }
     if (!s.exists) {
       el.createDiv({ cls: 'vag-diag-line', text: `✗ no such folder: ${s.root}` });
       return;
@@ -2413,6 +2643,45 @@ class AutomationGraphSettingTab extends PluginSettingTab {
       });
     const repoReport = containerEl.createDiv({ cls: 'setting-item-description vag-diag' });
     this.renderRepoStatus(repoReport);
+
+    // Picking from a list beats knowing a path. The scan is cheap and bounded,
+    // but it is still disk work, so it happens when asked rather than every
+    // time the settings tab is opened.
+    const picker = containerEl.createDiv({ cls: 'setting-item-description vag-diag' });
+    new Setting(containerEl)
+      .setName('Find repositories')
+      .setDesc('Looks for repositories with workflows in the usual places — beside the '
+        + 'vault, and under your home folder — and lists them to pick from.')
+      .addButton((btn) => {
+        btn.setButtonText('Find').onClick(() => {
+          picker.empty();
+          picker.createDiv({ cls: 'vag-diag-line', text: 'Looking…' });
+          this.plugin.forgetDetection();
+          const found = this.plugin.repoCandidates();
+          picker.empty();
+          if (!found.length) {
+            picker.createDiv({
+              cls: 'vag-diag-line',
+              text: 'Nothing with .github/workflows turned up beside the vault or under '
+                + 'your home folder. Paste the path above instead.',
+            });
+            return;
+          }
+          const list = picker.createDiv({ cls: 'vag-candidates' });
+          for (const c of found.slice(0, 8)) {
+            const row = list.createEl('button', { cls: 'vag-candidate' });
+            row.createDiv({ cls: 'vag-candidate-path', text: this.plugin.shortPath(c.root) });
+            row.createDiv({
+              cls: 'vag-candidate-meta',
+              text: `${c.workflows} workflow${c.workflows === 1 ? '' : 's'}${c.isGit ? '' : ' · not a git repository'}`,
+            });
+            row.onclick = async () => {
+              await this.plugin.adoptRepo(c.root);
+              this.display();                    // reflect the new value in the field
+            };
+          }
+        });
+      });
 
     const found = this.plugin.live && this.plugin.live.tokenFrom;
     containerEl.createEl('p', {
@@ -2563,7 +2832,8 @@ module.exports = AutomationGraphPlugin;
 module.exports.__internals = {
   readSources, parseTriggers, parseEmissions, parseWorkflows, parseDeclared,
   nextFire, cronLabel, buildGraph, layout, renderSvg, buildSvgElement, approxWidth, KIND,
-  readRepoSlug, resolveRepoRoot, resolveToken, fetchLive, localFreshness, stateFor,
+  readRepoSlug, resolveRepoRoot, findRepoCandidates, resolveToken, fetchLive,
+  localFreshness, stateFor,
   expectedPeriod, nodePeriod,
   pollDelay, ACTIVE_POLL_MS, watchTargets, configure,
   describeAge,
