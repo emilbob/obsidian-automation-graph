@@ -132,9 +132,29 @@ node check.js /path/to/your/repo
 
 # repository and vault in different places — the usual arrangement
 node check.js /path/to/repo --vault /path/to/vault --declared notes/automation.md
+
+# just the code checks, no repository needed — what CI runs
+node check.js --unit
 ```
 
 Runs the same parse → build → layout → SVG path outside Obsidian and prints what it derived: every node, its source file, every edge, and any drift. It also unit-checks the repository-path resolution. Exits non-zero if it derives no runners, so a parser regression is catchable from a terminal or from CI.
+
+## Releasing
+
+Push a tag matching the version — `1.2.3`, no `v` — and [`.github/workflows/release.yml`](.github/workflows/release.yml) does the rest: it refuses to publish unless the tag, `manifest.json` and `versions.json` all agree, runs the code checks, attaches `main.js` / `manifest.json` / `styles.css`, and attests their provenance so anyone can verify they were built from this repository.
+
+The agreement check exists because getting it wrong is silent. Obsidian reads the tag as the version and never looks at the branch; a mismatched or `v`-prefixed tag produces a release that simply is never offered to anyone.
+
+## What it accesses, and why
+
+Obsidian's automated review flags two things about this plugin. Both are accurate, and both are the plugin working as intended:
+
+| Flag | Why |
+|---|---|
+| **Direct filesystem access** | `.github/` and `.claude/` are dot-folders, which Obsidian's index excludes — `fs` is the only way to read them. Also why it is desktop-only. |
+| **Shell execution** | `gh auth token`, so run state works without storing a token on disk, and `git log`, so staleness works offline. Both run through `execFileSync` with argument arrays, never a shell string. |
+
+Neither can be removed without removing what the plugin is for. Nothing is written outside the plugin's own `data.json`, and no network request is made except to `api.github.com`, only when you have asked for run state.
 
 ## Limitations
 

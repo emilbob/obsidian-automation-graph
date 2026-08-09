@@ -133,6 +133,19 @@ console.log(`resolveRepoRoot: ${cases.length - unitFailures}/${cases.length} cas
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+/* --unit stops here: everything above tests the code against inputs it builds
+ * itself, everything below needs a repository with automation in it. CI runs
+ * against this repository, which has no graph of its own to derive — asking it
+ * to find one would fail the build for the wrong reason. */
+if (args.includes('--unit')) {
+  if (unitFailures) {
+    console.error(`\nFAIL: ${unitFailures} check(s) failed — see the ✗ lines above.`);
+    process.exit(1);
+  }
+  console.log('\nunit checks pass');
+  process.exit(0);
+}
+
 const src = readSources(fs, path, root, vaultRoot);
 const graph = buildGraph(src);
 const view = layout(graph, { measure: approxWidth, maxWidth: 330 });   // a real sidebar's width
