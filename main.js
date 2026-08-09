@@ -1721,17 +1721,18 @@ class AutomationGraphView extends ItemView {
       });
     }
 
-    new Setting(box)
-      .addButton((btn) => {
-        // Says what it does. The old label — "Choose a folder…" — promised a
-        // picker this button does not open, on the one element that looks like
-        // the primary action.
-        btn.setButtonText('Open settings').onClick(() => this.plugin.openSettings());
-        // Accented only when it is the way forward. With repositories listed
-        // above, the rows are the action and an accented button beside them
-        // competes for the eye with the thing the reader should press.
-        if (!candidates.length) btn.setCta();
-      });
+    // A plain button, not a Setting. A Setting row is a label on the left and a
+    // control on the right, and with no label it renders as a full-width empty
+    // bar — which, directly under a list of full-width repository rows, reads
+    // as a seventh blank repository.
+    //
+    // Says what it does, too: the old label, "Choose a folder…", promised a
+    // picker this button does not open.
+    const openBtn = box.createEl('button', {
+      cls: `vag-empty-btn${candidates.length ? '' : ' mod-cta'}`,
+      text: 'Open settings',
+    });
+    openBtn.onclick = () => this.plugin.openSettings();
   }
 
   renderHeader(head, legend, view) {

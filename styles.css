@@ -366,7 +366,9 @@
 
 .vag-empty-hint { margin-top: 8px; }
 
-.vag-empty .setting-item { border-top: none; padding-bottom: 0; }
+/* Sized to its label rather than to the pane, so it cannot be mistaken for
+ * another row in the list above it. */
+.vag-empty-btn { display: inline-block; margin-top: 8px; cursor: pointer; }
 
 /* Paths are long; the default input shows about a third of one. */
 .vag-wide-input { width: 100%; }
