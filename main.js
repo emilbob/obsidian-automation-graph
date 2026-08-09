@@ -1335,6 +1335,24 @@ function badgeSvg(n, st) {
   return '';
 }
 
+/* The two kinds every graph carries whether or not anything was found: the
+ * human gate and `main`. They are the frame derived automation hangs on, not
+ * evidence that any was derived. */
+const SCAFFOLD_KINDS = new Set(['human', 'artifact']);
+
+/* Whether this graph shows the reader anything at all.
+ *
+ * The panel used to ask `view.nodes.length`, which is never zero: buildGraph
+ * lays down the gate and `main` unconditionally, so a vault with no automation
+ * still produced two nodes and one edge between them. The empty panel — the
+ * screen that says what was looked for and offers the repositories found on
+ * this machine — could therefore never appear. A new reader got a picture of
+ * two boxes meaning nothing, instead of the one screen written for them.
+ */
+function graphHasContent(nodes) {
+  return (nodes || []).some((n) => !SCAFFOLD_KINDS.has(n.kind));
+}
+
 function nodeTooltip(n, st) {
   const bits = [n.label, n.kind];
   if (n.cron) bits.push(`cron ${n.cron} (UTC)`);
@@ -1562,7 +1580,7 @@ class AutomationGraphView extends ItemView {
 
     this.view = view;
 
-    if (!view.nodes.length) {
+    if (!graphHasContent(view.nodes)) {
       this.renderEmpty(root);
       return;
     }
@@ -2853,7 +2871,8 @@ module.exports = AutomationGraphPlugin;
 module.exports.__internals = {
   readSources, parseTriggers, parseEmissions, parseWorkflows, parseDeclared,
   nextFire, cronLabel, buildGraph, layout, renderSvg, buildSvgElement, approxWidth, KIND,
-  readRepoSlug, resolveRepoRoot, findRepoCandidates, resolveToken, fetchLive,
+  readRepoSlug, resolveRepoRoot, findRepoCandidates, graphHasContent,
+  resolveToken, fetchLive,
   localFreshness, stateFor,
   expectedPeriod, nodePeriod,
   pollDelay, ACTIVE_POLL_MS, watchTargets, configure,
