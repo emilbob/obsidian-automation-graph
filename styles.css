@@ -367,8 +367,14 @@
 .vag-candidate {
   display: block;
   width: 100%;
+  /* Obsidian gives every button a fixed height, which clips the second line —
+   * the workflow count, which is the evidence you pick a repository on. Same
+   * reason .vag-btn sets it. */
+  height: auto;
   padding: 6px 8px;
   text-align: left;
+  white-space: normal;
+  line-height: 1.35;
   cursor: pointer;
   background: var(--background-modifier-form-field);
   border: 1px solid var(--background-modifier-border);

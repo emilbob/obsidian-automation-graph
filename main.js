@@ -2647,7 +2647,10 @@ class AutomationGraphSettingTab extends PluginSettingTab {
     // Picking from a list beats knowing a path. The scan is cheap and bounded,
     // but it is still disk work, so it happens when asked rather than every
     // time the settings tab is opened.
-    const picker = containerEl.createDiv({ cls: 'setting-item-description vag-diag' });
+    // Declared before the Setting so the click handler can close over it, but
+    // appended after — results belong under the button that produced them, not
+    // above it, where they read as belonging to the setting before this one.
+    let picker;
     new Setting(containerEl)
       .setName('Find repositories')
       .setDesc('Looks for repositories with workflows in the usual places — beside the '
@@ -2682,6 +2685,7 @@ class AutomationGraphSettingTab extends PluginSettingTab {
           }
         });
       });
+    picker = containerEl.createDiv({ cls: 'setting-item-description vag-diag' });
 
     const found = this.plugin.live && this.plugin.live.tokenFrom;
     containerEl.createEl('p', {
