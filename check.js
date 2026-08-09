@@ -133,6 +133,27 @@ console.log(`resolveRepoRoot: ${cases.length - unitFailures}/${cases.length} cas
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+/* Selectors Obsidian's plugin review objects to.
+ *
+ * :has shipped in 1.3.1 to widen a settings input and was flagged on the
+ * listing within the hour, for broad style invalidation. The relationship it
+ * expressed — reach the parent control from the input — is walked once in JS
+ * now instead. Asserted so it does not come back the next time a rule needs a
+ * parent.
+ */
+{
+  const css = fs.readFileSync(path.join(__dirname, 'styles.css'), 'utf8');
+  const offenders = css.split('\n')
+    .map((line, i) => [i + 1, line])
+    .filter(([, line]) => /:has\(/.test(line) && !line.trim().startsWith('*'));
+  console.log(`css: ${offenders.length ? `${offenders.length} flagged selector(s)` : 'no flagged selectors'}`);
+  for (const [n, line] of offenders) {
+    console.error(`FAIL: styles.css:${n} uses :has — the review flags it; put a class on the element instead`);
+    console.error(`      ${line.trim()}`);
+    unitFailures += 1;
+  }
+}
+
 /* The README's settings table against the settings that exist.
  *
  * "Declared automation note" and "Timezone" were documented from 1.0.0 and had

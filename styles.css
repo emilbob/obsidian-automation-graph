@@ -376,7 +376,12 @@
  * .setting-item-control, which is a flex item sized to its content, so 100% of
  * narrow is still narrow. The control has to be told to take the free space
  * first — then the input can fill it. */
-.setting-item:has(.vag-wide-input) .setting-item-control { flex: 1 1 auto; }
+/* The row carries the class, put there by wide() when the tab is built. The
+ * obvious way to write this is a parent selector keyed off the input, which
+ * Obsidian's review flags for broad invalidation — the style engine would
+ * re-test the subtree far more often than the class needs setting, which is
+ * once. */
+.vag-wide-setting .setting-item-control { flex: 1 1 auto; }
 
 .vag-wide-input {
   width: 100%;
