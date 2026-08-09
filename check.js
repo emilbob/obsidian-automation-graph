@@ -41,7 +41,7 @@ Module._load = function stub(request, ...rest) {
 const plugin = require('./main.js');
 const {
   readSources, buildGraph, layout, renderSvg, approxWidth, nextFire, resolveRepoRoot,
-  findRepoCandidates,
+  findRepoCandidates, keyboardTarget, graphAriaLabel,
 } = plugin.__internals;
 
 const args = process.argv.slice(2);
@@ -163,6 +163,58 @@ for (const e of graph.edges) console.log(`  ${e.from}  --${e.type}-->  ${e.to}`)
 console.log(`\ndrift findings: ${graph.drift.length}`);
 for (const d of graph.drift) console.log(`  ⚠ ${d.text}`);
 
+/* Keyboard traversal, against the real laid-out graph rather than a toy one.
+ * The property that matters is reachability: a keyboard user must be able to
+ * get from the first node to every other one, or the panel is a maze with
+ * rooms that have no doors. Checked by walking, not by assertion about one
+ * hand-picked node. */
+console.log('\nkeyboard');
+{
+  const first = keyboardTarget(view, null, 'ArrowRight');
+  const seen = new Set();
+  const queue = [first];
+  while (queue.length) {
+    const at = queue.shift();
+    if (!at || seen.has(at)) continue;
+    seen.add(at);
+    for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown']) {
+      const next = keyboardTarget(view, at, key);
+      if (next && !seen.has(next)) queue.push(next);
+    }
+  }
+  const unreachable = view.nodes.filter((n) => !seen.has(n.id));
+  console.log(`  entry node: ${first}`);
+  console.log(`  reachable by arrow keys: ${seen.size}/${view.nodes.length}`);
+  if (unreachable.length) {
+    for (const n of unreachable.slice(0, 8)) console.log(`  ✗ unreachable: ${n.label} (${n.id})`);
+    unitFailures += 1;
+  }
+
+  // Left and right must undo each other along a real edge, or the reader
+  // cannot back out of where a keypress took them.
+  let asym = 0;
+  for (const n of view.nodes) {
+    const fwd = keyboardTarget(view, n.id, 'ArrowRight');
+    if (!fwd) continue;
+    const isEdge = graph.edges.some((e) => e.from === n.id && e.to === fwd);
+    if (!isEdge) continue;                       // fell through to a rank hop
+    const back = keyboardTarget(view, fwd, 'ArrowLeft');
+    if (back !== n.id && !graph.edges.some((e) => e.to === fwd && e.from === back)) asym += 1;
+  }
+  console.log(`  edge steps that reverse cleanly: ${asym === 0 ? 'all' : `${asym} do not`}`);
+  if (asym) unitFailures += 1;
+
+  // Every node must carry a name a screen reader can read out. Counted off the
+  // rendered output rather than the model, since the markup is what assistive
+  // technology actually meets.
+  const markup = renderSvg(view);
+  const named = (markup.match(/role="button" aria-label="[^"]+"/g) || []).length;
+  console.log(`  nodes with an accessible name: ${named}/${view.nodes.length}`);
+  if (named !== view.nodes.length) unitFailures += 1;
+
+  console.log(`  graph label: "${graphAriaLabel(view)}"`);
+}
+
 if (htmlOut) {
   const css = fs.readFileSync(path.join(__dirname, 'styles.css'), 'utf8');
   fs.writeFileSync(htmlOut, `<!doctype html><meta charset="utf-8"><style>
@@ -178,7 +230,7 @@ ${css}</style><div class="pane vag-root"><div class="vag-scroll">${renderSvg(vie
 }
 
 if (unitFailures) {
-  console.error(`\nFAIL: ${unitFailures} resolveRepoRoot case(s) wrong — the repository path setting is broken.`);
+  console.error(`\nFAIL: ${unitFailures} check(s) failed — see the ✗ lines above.`);
   process.exit(1);
 }
 

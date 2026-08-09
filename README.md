@@ -91,6 +91,23 @@ It is not real-time and can't be: GitHub does not push to a desktop app.
 | drag a node | move it — the position persists |
 | double-click empty space | fit everything back in view |
 
+Everything except dragging a node has a key, and **`?` in the header lists them all** rather than leaving them to be discovered:
+
+| Key | Does |
+|---|---|
+| `Tab` | move between nodes |
+| `←` `→` | follow an edge back or forward |
+| `↑` `↓` | move between nodes at the same level |
+| `Home` / `End` | first or last node |
+| `Enter` / `Space` | select — traces everything downstream |
+| `Esc` | clear the selection |
+| `+` / `−` | zoom |
+| `0` | fit everything in view |
+
+Arrow keys follow the graph's own edges, so `→` answers "what does this set off?" in one keypress. Where a node has no edge that way, the key moves to the nearest node in the next rank instead of doing nothing — which keeps every node reachable, including declared runners that connect to nothing in the repository. Focus brings the camera with it, so arrowing never moves the selection to somewhere off-screen.
+
+Nodes are `role="button"` with an accessible name and a pressed state, the graph announces its size on entry, and the run-state line is a polite live region so a run starting is not visible-only news.
+
 Selecting a node plays the chain it sets off as a wave, hop by hop — the quickest way to answer "what happens when this fires?".
 
 Nodes are laid out by rank: clocks at the top, the human gate in the middle, `main` at the bottom. Dragging a node stores an *offset* from that layout, so untouched nodes keep following it as your automation changes. **Reset node positions** in the command palette undoes the lot.

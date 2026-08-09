@@ -1279,6 +1279,7 @@ function renderSvg(view, state) {
     // node dragged past the content's edge.
     `<svg class="vag-svg" viewBox="0 0 ${view.width} ${view.height}" `
     + 'width="100%" height="100%" preserveAspectRatio="xMidYMid meet" '
+    + `role="group" aria-label="${esc(graphAriaLabel(view))}" `
     + 'xmlns="http://www.w3.org/2000/svg">',
   );
   parts.push(
@@ -1306,7 +1307,8 @@ function renderSvg(view, state) {
     const cls = `vag-node vag-${KIND[n.kind].cls}${n.verified ? '' : ' vag-declared'}`
       + `${st ? ` vag-state-${st.kind}` : ''}`;
     parts.push(
-      `<g class="${cls}" data-node="${esc(n.id)}" data-cadence="${esc(n.cadence || '')}" tabindex="0">`
+      `<g class="${cls}" data-node="${esc(n.id)}" data-cadence="${esc(n.cadence || '')}" tabindex="0" `
+      + `role="button" aria-label="${esc(nodeTooltip(n, st))}" aria-pressed="false">`
       + `<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="7"/>`
       + `<text x="${n.x + n.w / 2}" y="${n.y + n.h / 2 + 4}" text-anchor="middle">`
       + `${esc(n.text || nodeText(n))}</text>`
@@ -1335,6 +1337,19 @@ function badgeSvg(n, st) {
   return '';
 }
 
+/* What the graph is, said once on entry. Counts first: "34 nodes" tells a
+ * screen-reader user whether they are about to arrow through something small
+ * or something they should filter first. */
+function graphAriaLabel(view) {
+  const nodes = (view && view.nodes) || [];
+  const edges = (view && view.edges) || [];
+  const declared = nodes.filter((n) => !n.verified).length;
+  return `Automation graph: ${nodes.length} node${nodes.length === 1 ? '' : 's'}, `
+    + `${edges.length} connection${edges.length === 1 ? '' : 's'}`
+    + `${declared ? `, ${declared} declared but not verified` : ''}. `
+    + 'Use arrow keys to move, Enter to select.';
+}
+
 function nodeTooltip(n, st) {
   const bits = [n.label, n.kind];
   if (n.cron) bits.push(`cron ${n.cron} (UTC)`);
@@ -1344,6 +1359,66 @@ function nodeTooltip(n, st) {
     ? `from ${n.source || 'this repository'}`
     : `declared in ${n.source || 'a note'} — not verifiable from this repository`);
   return bits.filter(Boolean).join(' · ');
+}
+
+/* Arrow-key movement across the graph.
+ *
+ * Left and right follow the edges, because the edges are what the picture is
+ * about: "what does this set off" should be one key, not a hunt. Up and down
+ * move between siblings at the same rank — the other things that fire on a
+ * clock, the other artifacts a workflow writes.
+ *
+ * Where a node has no edge in the direction asked for, movement falls back to
+ * the nearest node in the next rank rather than stopping. A key that silently
+ * does nothing reads as a broken panel, and more importantly it can strand a
+ * keyboard user on a node with no outgoing edges, unable to reach the rest of
+ * the graph without tabbing through all of it.
+ *
+ * Pure over the laid-out view, so check.js can verify the traversal instead of
+ * it being the one layer only exercised by hand.
+ */
+function keyboardTarget(view, id, key) {
+  const nodes = (view && view.nodes) || [];
+  if (!nodes.length) return null;
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const cur = byId.get(id);
+  const rank = (n) => n.rank || 0;
+  // Reading order within a rank: left to right, then top to bottom, with the
+  // id as a last resort so the traversal is stable rather than layout-lucky.
+  const order = (a, b) => (a.x - b.x) || (a.y - b.y) || (a.id < b.id ? -1 : 1);
+
+  if (!cur) {
+    return [...nodes].sort((a, b) => (rank(a) - rank(b)) || order(a, b))[0].id;
+  }
+
+  if (key === 'Home') return [...nodes].sort((a, b) => (rank(a) - rank(b)) || order(a, b))[0].id;
+  if (key === 'End') return [...nodes].sort((a, b) => (rank(b) - rank(a)) || order(a, b))[0].id;
+
+  if (key === 'ArrowRight' || key === 'ArrowLeft') {
+    const forward = key === 'ArrowRight';
+    const linked = ((view.edges) || [])
+      .filter((e) => (forward ? e.from === id : e.to === id))
+      .map((e) => byId.get(forward ? e.to : e.from))
+      .filter(Boolean)
+      .sort(order);
+    if (linked.length) return linked[0].id;
+
+    const beyond = nodes
+      .filter((n) => (forward ? rank(n) > rank(cur) : rank(n) < rank(cur)))
+      .sort((a, b) => (Math.abs(rank(a) - rank(cur)) - Math.abs(rank(b) - rank(cur)))
+        || (Math.abs(a.x - cur.x) - Math.abs(b.x - cur.x))
+        || order(a, b));
+    return beyond.length ? beyond[0].id : null;
+  }
+
+  if (key === 'ArrowDown' || key === 'ArrowUp') {
+    const siblings = nodes.filter((n) => rank(n) === rank(cur)).sort(order);
+    const at = siblings.findIndex((n) => n.id === id);
+    const next = siblings[at + (key === 'ArrowDown' ? 1 : -1)];
+    return next ? next.id : null;
+  }
+
+  return null;
 }
 
 /* ---------------------------------------------------------- DOM rendering */
@@ -1378,6 +1453,10 @@ function buildSvgElement(view, state) {
     width: '100%',
     height: '100%',
     preserveAspectRatio: 'xMidYMid meet',
+    // Named and grouped, so a screen reader announces a graph of a known size
+    // on entry rather than dropping the reader into unlabelled shapes.
+    role: 'group',
+    'aria-label': graphAriaLabel(view),
   });
 
   const defs = svgEl('defs');
@@ -1411,7 +1490,16 @@ function buildSvgElement(view, state) {
     const cls = `vag-node vag-${KIND[n.kind].cls}${n.verified ? '' : ' vag-declared'}`
       + `${st ? ` vag-state-${st.kind}` : ''}`;
     const g = svgEl('g', {
-      class: cls, 'data-node': n.id, 'data-cadence': n.cadence || '', tabindex: '0',
+      class: cls,
+      'data-node': n.id,
+      'data-cadence': n.cadence || '',
+      tabindex: '0',
+      // A focusable <g> with no role announces as "group", which tells the
+      // reader nothing about it being operable. It selects and traces a chain,
+      // so it is a button, and its pressed state is the selection.
+      role: 'button',
+      'aria-label': nodeTooltip(n, st),
+      'aria-pressed': 'false',
     });
 
     g.appendChild(svgEl('rect', { x: n.x, y: n.y, width: n.w, height: n.h, rx: 7 }));
@@ -1602,15 +1690,14 @@ class AutomationGraphView extends ItemView {
         if (this.suppressClick) return;      // this click ended a drag
         this.select(id);
       });
-      el.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter' || ev.key === ' ') this.select(id);
-      });
       // Hover lights the immediate neighbourhood, no click required. Selection
       // is still what traces the whole downstream chain.
       el.addEventListener('mouseenter', () => this.hover(id));
       el.addEventListener('mouseleave', () => this.hover(null));
       this.installNodeDrag(el, id, scroller);
     });
+
+    this.installKeyboard(scroller);
 
     this.installZoomPan(scroller);
     if (!this.pan) this.pan = { x: 0, y: 0 };
@@ -1622,6 +1709,143 @@ class AutomationGraphView extends ItemView {
     } else {
       this.applyView();
     }
+  }
+
+  /* Shown in the detail pane rather than as a floating overlay, so it can be
+   * read at leisure beside the graph and dismissed by the same button. */
+  renderHelp(open) {
+    if (!open) {
+      // Restore whatever the pane was showing. Not select(), which toggles —
+      // calling it here would clear the selection as a side effect of closing
+      // a help panel.
+      const node = this.selected && this.view
+        ? this.view.nodes.find((n) => n.id === this.selected)
+        : null;
+      this.showDetail(node || null);
+      return;
+    }
+    const d = this.detail;
+    d.empty();
+    d.createDiv({ cls: 'vag-d-title', text: 'Keyboard' });
+    const keys = [
+      ['Tab', 'move between nodes'],
+      ['← →', 'follow an edge back or forward'],
+      ['↑ ↓', 'move between nodes at the same level'],
+      ['Home / End', 'first or last node'],
+      ['Enter / Space', 'select — traces everything downstream'],
+      ['Esc', 'clear the selection'],
+      ['+ / −', 'zoom'],
+      ['0', 'fit everything in view'],
+    ];
+    const kl = d.createEl('dl', { cls: 'vag-keys' });
+    for (const [k, what] of keys) {
+      kl.createEl('dt', { text: k });
+      kl.createEl('dd', { text: what });
+    }
+    d.createDiv({ cls: 'vag-d-title', text: 'Mouse' });
+    const ml = d.createEl('dl', { cls: 'vag-keys' });
+    for (const [k, what] of [
+      ['click', 'select'],
+      ['drag a node', 'move it — the position persists'],
+      ['drag background', 'pan'],
+      ['wheel', 'zoom (shift+wheel pans)'],
+      ['double-click', 'fit everything in view'],
+    ]) {
+      ml.createEl('dt', { text: k });
+      ml.createEl('dd', { text: what });
+    }
+  }
+
+  /* One delegated handler rather than one per node: the keys that move between
+   * nodes and the keys that move the camera are the same keyboard, and splitting
+   * them across two places is how they end up disagreeing.
+   *
+   * Everything the mouse can do except dragging a node has a key here, because
+   * every mouse gesture in this panel was previously the only way to do the
+   * thing it does. */
+  installKeyboard(scroller) {
+    scroller.addEventListener('keydown', (ev) => {
+      if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      const nodeEl = ev.target.closest && ev.target.closest('[data-node]');
+      const id = nodeEl && nodeEl.getAttribute('data-node');
+
+      // Space scrolls the pane by default, so a node that reacts to Space
+      // without saying so both selects and jumps the view out from under you.
+      if (id && (ev.key === 'Enter' || ev.key === ' ')) {
+        ev.preventDefault();
+        this.select(id);
+        return;
+      }
+
+      if (ev.key === 'Escape') {
+        if (!this.selected) return;
+        ev.preventDefault();
+        this.select(null);
+        return;
+      }
+
+      // Camera keys, matching what the wheel and double-click already do.
+      if (ev.key === '+' || ev.key === '=') { ev.preventDefault(); this.zoomBy(1.12); return; }
+      if (ev.key === '-' || ev.key === '_') { ev.preventDefault(); this.zoomBy(1 / 1.12); return; }
+      if (ev.key === '0') { ev.preventDefault(); this.fit(); return; }
+
+      const NAV = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+      if (!NAV.includes(ev.key)) return;
+      if (!this.view) return;
+      // Arrows inside the panel are navigation, not page scroll — but only once
+      // there is something to navigate, so they stay ordinary keys elsewhere.
+      ev.preventDefault();
+      const next = keyboardTarget(this.view, id, ev.key);
+      if (next) this.focusNode(next);
+    });
+  }
+
+  /* Zoom about the centre of the pane. The wheel zooms about the pointer, which
+   * a key has no equivalent for; the centre is the honest substitute. */
+  zoomBy(factor) {
+    const scroller = this.contentEl.querySelector('.vag-scroll');
+    if (!scroller || !this.view) return;
+    const before = this.scale || 1;
+    const next = Math.min(4, Math.max(0.2, before * factor));
+    if (next === before) return;
+    const w = scroller.clientWidth || this.view.width;
+    const h = scroller.clientHeight || this.view.height;
+    const cx = this.pan.x + (w / before) / 2;
+    const cy = this.pan.y + (h / before) / 2;
+    this.scale = next;
+    this.pan = { x: cx - (w / next) / 2, y: cy - (h / next) / 2 };
+    this.applyView();
+  }
+
+  /* Move focus, and bring the camera with it. Without the second half, tabbing
+   * or arrowing to a node that is off-screen focuses something the reader
+   * cannot see — the panel looks frozen while the selection moves invisibly. */
+  focusNode(id) {
+    const el = this.contentEl.querySelector(`[data-node="${CSS.escape(id)}"]`);
+    if (!el) return;
+    this.ensureVisible(id);
+    el.focus({ preventScroll: true });
+    this.hover(id);
+  }
+
+  /* Pan the least amount that puts a node inside the viewport. Panning to
+   * centre it on every keypress would make the whole picture lurch on each
+   * arrow, which loses the reader's sense of where they are in the graph. */
+  ensureVisible(id) {
+    const scroller = this.contentEl.querySelector('.vag-scroll');
+    if (!scroller || !this.view) return;
+    const n = this.view.nodes.find((k) => k.id === id);
+    if (!n) return;
+    const scale = this.scale || 1;
+    const vw = (scroller.clientWidth || this.view.width) / scale;
+    const vh = (scroller.clientHeight || this.view.height) / scale;
+    const pad = 12;
+
+    if (n.x - pad < this.pan.x) this.pan.x = n.x - pad;
+    else if (n.x + n.w + pad > this.pan.x + vw) this.pan.x = (n.x + n.w + pad) - vw;
+    if (n.y - pad < this.pan.y) this.pan.y = n.y - pad;
+    else if (n.y + n.h + pad > this.pan.y + vh) this.pan.y = (n.y + n.h + pad) - vh;
+    this.applyView();
   }
 
   /* The first thing most readers see, because most vaults are not repositories.
@@ -1726,6 +1950,19 @@ class AutomationGraphView extends ItemView {
     const move = tools.createEl('button', { text: inMain ? 'To sidebar' : 'Open wide', cls: 'vag-btn' });
     move.onclick = () => (inMain ? this.plugin.activate() : this.plugin.openInMainPane());
 
+    // Every way of working this panel was a gesture nobody was told about:
+    // drag a node, double-click the background, wheel to zoom. A reader who
+    // never happens to try dragging never learns the layout is theirs to
+    // arrange, and a keyboard reader had nothing at all.
+    const help = tools.createEl('button', { text: '?', cls: 'vag-btn vag-btn-icon' });
+    help.setAttribute('aria-label', 'Keyboard shortcuts and gestures');
+    help.setAttribute('aria-expanded', 'false');
+    help.onclick = () => {
+      const open = help.getAttribute('aria-expanded') === 'true';
+      help.setAttribute('aria-expanded', open ? 'false' : 'true');
+      this.renderHelp(!open);
+    };
+
     // The live row states its own freshness, always. There is no rendering of
     // this panel in which run state is silently missing: it either carries a
     // timestamp or it says why it has none.
@@ -1741,6 +1978,10 @@ class AutomationGraphView extends ItemView {
 
     const live = this.plugin.live;
     const row = head.createDiv({ cls: 'vag-live' });
+    // Polling rewrites this line on its own — a run starting, a token expiring.
+    // Announced politely so that change reaches a screen reader too, rather
+    // than being visible-only news.
+    row.setAttribute('aria-live', 'polite');
     let text;
     let cls = 'vag-live-chip';
     if (this.loading) {
@@ -2084,7 +2325,11 @@ class AutomationGraphView extends ItemView {
     this.selected = this.selected === id ? null : id;
     const node = this.view.nodes.find((n) => n.id === this.selected);
     this.contentEl.querySelectorAll('[data-node]').forEach((el) => {
-      el.classList.toggle('vag-selected', el.getAttribute('data-node') === this.selected);
+      const on = el.getAttribute('data-node') === this.selected;
+      el.classList.toggle('vag-selected', on);
+      // The class is the visible half of selection; this is the half a screen
+      // reader gets, and they must not be allowed to drift apart.
+      el.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
     const trace = this.selected ? this.downstream(this.selected) : null;
     this.contentEl.querySelectorAll('.vag-edge').forEach((el) => {
@@ -2109,7 +2354,9 @@ class AutomationGraphView extends ItemView {
     if (!node) {
       d.createDiv({
         cls: 'vag-hint',
-        text: 'Tap a node for what it is, where it is defined, and when it next runs.',
+        text: 'Select a node — click, or Tab to it and press Enter — for what it is, '
+          + 'where it is defined, and when it next runs. Arrow keys follow the edges; '
+          + '? lists the rest.',
       });
       return;
     }
@@ -2836,7 +3083,7 @@ module.exports.__internals = {
   localFreshness, stateFor,
   expectedPeriod, nodePeriod,
   pollDelay, ACTIVE_POLL_MS, watchTargets, configure,
-  describeAge,
+  describeAge, keyboardTarget, graphAriaLabel,
   // The view too, so the panel's own wiring — header, legend, selection,
   // detail pane — can be driven in a headless browser instead of being the one
   // layer nobody exercises until it is in front of a user.
