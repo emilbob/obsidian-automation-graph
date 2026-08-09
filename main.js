@@ -2632,6 +2632,20 @@ class AutomationGraphPlugin extends Plugin {
 
 /* ---------------------------------------------------------------- settings */
 
+/* Widen a settings text field, so a repository path is readable after typing.
+ *
+ * The class has to land on the row rather than the input: the control that
+ * needs the free space is the input's parent, and reaching a parent from CSS
+ * means :has — which Obsidian's review flags for broad style invalidation, and
+ * fairly. closest() walks the same relationship once when the tab is built,
+ * instead of leaving it to the style engine on every recalculation.
+ */
+function wide(text) {
+  text.inputEl.addClass('vag-wide-input');
+  const row = text.inputEl.closest('.setting-item');
+  if (row) row.addClass('vag-wide-setting');
+}
+
 class AutomationGraphSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -2682,7 +2696,7 @@ class AutomationGraphSettingTab extends PluginSettingTab {
         + '— absolute, or relative to the vault (../work/api), or starting with ~. '
         + 'The declared-automation note is always read from the vault, wherever this points.')
       .addText((text) => {
-        text.inputEl.addClass('vag-wide-input');
+        wide(text);
         text.setPlaceholder('~/code/my-repo  (empty = this vault)')
           .setValue(this.plugin.settings.repoPath || '')
           .onChange(async (value) => {
@@ -2827,7 +2841,7 @@ class AutomationGraphSettingTab extends PluginSettingTab {
         + 'laptop. Those become dashed nodes, marked as declared rather than verified. '
         + 'Leave it empty and the feature is off.')
       .addText((text) => {
-        text.inputEl.addClass('vag-wide-input');
+        wide(text);
         text.setPlaceholder('reference/System — How It Works.md')
           .setValue(this.plugin.settings.declaredNote || '')
           .onChange(async (value) => {
@@ -2848,7 +2862,7 @@ class AutomationGraphSettingTab extends PluginSettingTab {
         + 'IANA zone here to read them against somewhere else\'s day instead. Empty uses '
         + 'this machine\'s zone.')
       .addText((text) => {
-        text.inputEl.addClass('vag-wide-input');
+        wide(text);
         text.setPlaceholder(SYSTEM_TZ)
           .setValue(this.plugin.settings.timezone || '')
           .onChange(async (value) => {
